@@ -13,7 +13,7 @@
 //! 7. **Idle**: nothing to show (or Hidden, if the idle pill is disabled).
 
 use crate::event::{MediaInfo, OsdKind, SheenEvent, ShelfItem};
-use crate::geometry::Geometry;
+use crate::geometry::{Geometry, Rect, MAX_SCALE, MIN_SCALE, REVEAL, SIDE};
 use crate::transfers::{Transfer, TransferTracker};
 use serde::Serialize;
 use std::time::{Duration, Instant};
@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 pub struct IslandConfig {
     /// How long an OSD stays on screen after the *last* related event.
     pub osd_duration: Duration,
-    /// Grace period before an open panel collapses once the pointer leaves.
+    /// An open panel closes this long after the pointer leaves (a click
+    /// anywhere else closes it at once).
     pub collapse_delay: Duration,
     /// Show a small pill when there is nothing else to display.
     pub show_idle_pill: bool,
@@ -32,7 +33,7 @@ impl Default for IslandConfig {
     fn default() -> Self {
         Self {
             osd_duration: Duration::from_millis(1600),
-            collapse_delay: Duration::from_millis(700),
+            collapse_delay: Duration::from_secs(4),
             show_idle_pill: true,
         }
     }
@@ -67,6 +68,10 @@ pub struct Presentation {
     pub shelf: Vec<ShelfItem>,
     /// A file drag is in progress: the shelf is acting as a drop target.
     pub dragging: bool,
+    /// Show the small round shelf button beside the capsule.
+    pub shelf_badge: bool,
+    /// Size multiplier; the UI scales about the top centre.
+    pub scale: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +99,9 @@ pub struct Island {
     transfers: TransferTracker,
     file_drag: bool,
     shelf: Vec<ShelfItem>,
+    /// Hidden with the close button until the pointer comes back.
+    dismissed: bool,
+    scale: f64,
 }
 
 impl Island {
@@ -109,6 +117,8 @@ impl Island {
             transfers: TransferTracker::default(),
             file_drag: false,
             shelf: Vec::new(),
+            dismissed: false,
+            scale: 1.0,
         }
     }
 
@@ -133,6 +143,9 @@ impl Island {
             }
             SheenEvent::Hover(on) => {
                 self.hovering = on;
+                if on && self.dismissed {
+                    self.dismissed = false;
+                }
                 if on {
                     self.collapse_at = None;
                 } else if self.panel != Panel::None {
@@ -160,6 +173,20 @@ impl Island {
                 self.file_drag = on;
             }
             SheenEvent::Shelf(items) => self.shelf = items,
+            SheenEvent::OutsideClick => {
+                if self.panel != Panel::None && !self.file_drag {
+                    self.collapse();
+                }
+            }
+            SheenEvent::Dismiss => {
+                self.dismissed = true;
+                self.collapse();
+            }
+            SheenEvent::SetScale(s) => {
+                if s.is_finite() {
+                    self.scale = s.clamp(MIN_SCALE, MAX_SCALE);
+                }
+            }
         }
         self.expire(now);
         self.present() != before
@@ -184,7 +211,7 @@ impl Island {
     pub fn present(&self) -> Presentation {
         let osd = self.osd.as_ref().map(|o| o.kind.clone());
         let transfers = self.transfers.visible();
-        let mode = if self.fullscreen {
+        let mode = if self.fullscreen || (self.dismissed && !self.file_drag) {
             Mode::Hidden
         } else if self.file_drag || self.panel == Panel::Shelf {
             Mode::Shelf
@@ -204,9 +231,9 @@ impl Island {
 
         let geometry = match mode {
             Mode::Hidden => Geometry::HIDDEN,
-            Mode::Idle if !self.shelf.is_empty() => Geometry::IDLE_SHELF,
             Mode::Idle => Geometry::IDLE,
             Mode::MediaCompact if self.hovering => Geometry::MEDIA_PEEK,
+            Mode::MediaCompact if !transfers.is_empty() => Geometry::MEDIA_COMPACT_TRANSFER,
             Mode::MediaCompact => Geometry::MEDIA_COMPACT,
             Mode::Transfer if self.hovering => Geometry::TRANSFER_PEEK,
             Mode::Transfer => Geometry::TRANSFER,
@@ -226,7 +253,40 @@ impl Island {
             transfers: if hidden { Vec::new() } else { transfers },
             shelf: self.shelf.clone(),
             dragging: self.file_drag && !hidden,
+            shelf_badge: !hidden && mode != Mode::Shelf && !self.shelf.is_empty(),
+            scale: self.scale,
         }
+    }
+
+    /// The part of the canvas that takes the mouse, in unscaled canvas
+    /// coordinates times the scale (i.e. what the hit-tester compares with).
+    pub fn hit_rect(&self) -> Rect {
+        let p = self.present();
+        let rect = if self.fullscreen {
+            Rect::default()
+        } else if p.mode == Mode::Hidden {
+            // Dismissed: a thin strip where the island was brings it back.
+            if self.dismissed {
+                REVEAL
+            } else {
+                Rect::default()
+            }
+        } else if p.hovering || p.shelf_badge {
+            // Room for the close button and the shelf badge.
+            p.geometry.rect().expand_x(SIDE)
+        } else {
+            p.geometry.rect()
+        };
+        if rect.is_empty() {
+            rect
+        } else {
+            rect.scaled(self.scale)
+        }
+    }
+
+    /// Whether a panel is open, so clicks elsewhere should be watched.
+    pub fn panel_open(&self) -> bool {
+        self.panel != Panel::None
     }
 
     fn open(&mut self, panel: Panel) {
@@ -346,15 +406,15 @@ mod tests {
         island.handle(SheenEvent::Hover(true), t);
         island.handle(SheenEvent::ExpandRequested, t);
         island.handle(SheenEvent::Hover(false), t + ms(100));
-        assert_eq!(island.next_deadline(), Some(t + ms(800)));
+        assert_eq!(island.next_deadline(), Some(t + ms(4100)));
 
         // Coming back within the grace period cancels the collapse.
         island.handle(SheenEvent::Hover(true), t + ms(500));
-        assert!(!island.tick(t + ms(900)));
+        assert!(!island.tick(t + ms(4200)));
         assert_eq!(island.present().mode, Mode::Expanded);
 
-        island.handle(SheenEvent::Hover(false), t + ms(1000));
-        assert!(island.tick(t + ms(1700)));
+        island.handle(SheenEvent::Hover(false), t + ms(5000));
+        assert!(island.tick(t + ms(9000)));
         assert_eq!(island.present().mode, Mode::MediaCompact);
     }
 
@@ -490,10 +550,11 @@ mod tests {
         assert!(!island.present().dragging);
 
         island.handle(SheenEvent::Hover(false), t + ms(100));
-        assert!(island.tick(t + ms(900)));
+        assert!(island.tick(t + ms(4200)));
         let p = island.present();
         assert_eq!(p.mode, Mode::Idle);
-        assert_eq!(p.geometry, Geometry::IDLE_SHELF, "badge shows parked files");
+        assert!(p.shelf_badge, "badge shows parked files");
+        assert!(island.hit_rect().width > Geometry::IDLE.width, "badge is clickable");
     }
 
     #[test]
@@ -504,6 +565,54 @@ mod tests {
         assert_eq!(island.present().mode, Mode::Shelf);
         island.handle(SheenEvent::CollapseRequested, t);
         assert_eq!(island.present().mode, Mode::Idle);
+    }
+
+    #[test]
+    fn outside_click_closes_panels_at_once() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::Media(Some(song())), t);
+        island.handle(SheenEvent::ExpandRequested, t);
+        assert!(island.panel_open());
+        island.handle(SheenEvent::OutsideClick, t + ms(10));
+        assert_eq!(island.present().mode, Mode::MediaCompact);
+        assert!(!island.panel_open());
+    }
+
+    #[test]
+    fn dismiss_hides_until_hovered_again() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::Media(Some(song())), t);
+        island.handle(SheenEvent::Hover(true), t);
+        island.handle(SheenEvent::Dismiss, t);
+        assert_eq!(island.present().mode, Mode::Hidden);
+        assert_eq!(island.hit_rect(), REVEAL, "the strip stays hoverable");
+
+        // Still over it after clicking: nothing changes until a new hover.
+        island.handle(SheenEvent::Hover(false), t + ms(100));
+        assert_eq!(island.present().mode, Mode::Hidden);
+        island.handle(SheenEvent::Hover(true), t + ms(900));
+        assert_eq!(island.present().mode, Mode::MediaCompact);
+    }
+
+    #[test]
+    fn compact_media_grows_for_a_transfer_badge() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::Media(Some(song())), t);
+        assert_eq!(island.present().geometry, Geometry::MEDIA_COMPACT);
+        island.handle(SheenEvent::Transfers(vec![download(1, 10, false)]), t);
+        assert_eq!(island.present().geometry, Geometry::MEDIA_COMPACT_TRANSFER);
+    }
+
+    #[test]
+    fn scale_is_clamped_and_applied_to_the_hit_rect() {
+        let mut island = Island::default();
+        island.handle(SheenEvent::SetScale(5.0), Instant::now());
+        assert_eq!(island.present().scale, MAX_SCALE);
+        let r = island.hit_rect();
+        assert!((r.width - Geometry::IDLE.width * MAX_SCALE).abs() < 1e-9);
     }
 
     #[test]

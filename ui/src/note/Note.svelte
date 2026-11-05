@@ -62,6 +62,10 @@
     initTheme();
     if (inTauri) {
       invoke<string>("note_load").then((t) => (text = t));
+      // The window is only ever created right before it is shown, and the
+      // "shown" event from that first open fires before this page has
+      // loaded. Open now, or the card stays invisible.
+      show();
       const subs = [listen("sheen://note-shown", show), listen("sheen://note-hide", hide)];
       return () => subs.forEach((s) => s.then((u) => u()));
     } else {

@@ -1,13 +1,16 @@
 <script lang="ts">
-  // A hairline progress bar along the bottom of a capsule.
+  // A hairline progress bar along the bottom of a capsule. Drawn only when
+  // the progress is known: an endlessly sliding bar is just noise.
   import type { Transfer } from "../types";
 
   let { transfer }: { transfer: Transfer } = $props();
 </script>
 
-<div class="line" class:indeterminate={transfer.progress == null} class:done={transfer.state === "done"}>
-  <i style:width="{(transfer.progress ?? 0.3) * 100}%"></i>
-</div>
+{#if transfer.progress != null}
+  <div class="line" class:done={transfer.state === "done"}>
+    <i style:width="{transfer.progress * 100}%"></i>
+  </div>
+{/if}
 
 <style>
   .line {
@@ -29,16 +32,5 @@
   }
   .done i {
     background: #30d158;
-  }
-  .indeterminate i {
-    animation: slide 1.4s ease-in-out infinite;
-  }
-  @keyframes slide {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(340%);
-    }
   }
 </style>

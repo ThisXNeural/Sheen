@@ -90,6 +90,9 @@ export async function layoutIssues(page: Page): Promise<Issue[]> {
         parent &&
         parent !== document.body &&
         (cs.position === "static" || cs.position === "relative") &&
+        // A transform draws outside the layout box on purpose (e.g. the
+        // island's size setting); "escape" still checks the window edges.
+        cs.transform === "none" &&
         !scrolls(parent) &&
         getComputedStyle(parent).display !== "contents" &&
         getComputedStyle(parent).display !== "inline" &&

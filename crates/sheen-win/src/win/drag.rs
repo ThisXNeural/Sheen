@@ -7,7 +7,7 @@ use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Ole::{
     DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE, DROPEFFECT_NONE,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     BHID_DataObject, IShellItemArray, SHCreateShellItemArrayFromIDLists, SHDoDragDrop,
@@ -24,6 +24,13 @@ pub fn file_drag_active() -> bool {
             return false;
         }
         FindWindowW(w!("SysDragImage"), None).is_ok_and(|h| IsWindowVisible(h).as_bool())
+    }
+}
+
+/// Left or right mouse button is held right now (anywhere on the desktop).
+pub fn mouse_button_down() -> bool {
+    unsafe {
+        GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 || GetAsyncKeyState(VK_RBUTTON.0 as i32) < 0
     }
 }
 

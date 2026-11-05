@@ -26,6 +26,14 @@ pub enum SheenEvent {
     Shelf(Vec<ShelfItem>),
     /// Open the shelf panel.
     ShelfRequested,
+    /// The left mouse button went down outside the island: close any open
+    /// panel right away.
+    OutsideClick,
+    /// The user hid the island with its close button. Hovering the spot
+    /// where it was brings it back.
+    Dismiss,
+    /// Size multiplier from settings (1.0 = default).
+    SetScale(f64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

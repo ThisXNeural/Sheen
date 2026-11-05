@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "sheen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "env_logger",
@@ -3235,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "sheen-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3243,7 +3243,7 @@ dependencies = [
 
 [[package]]
 name = "sheen-player"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fastrand",
  "image",
@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "sheen-win"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

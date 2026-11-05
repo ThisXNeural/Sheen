@@ -11,7 +11,7 @@ mod window;
 
 pub use audio::AudioHandle;
 pub use clipboard::spawn_clipboard_listener;
-pub use drag::{drag_files_out, file_drag_active};
+pub use drag::{drag_files_out, file_drag_active, mouse_button_down};
 pub use fullscreen::spawn_fullscreen_watcher;
 pub use hotkey::HotkeyHandle;
 pub use media::MediaHandle;

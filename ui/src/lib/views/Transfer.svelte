@@ -37,9 +37,9 @@
       {#if others > 0}<span class="more">+{others}</span>{/if}
       <span class="pct">{percent}</span>
     </div>
-    <div class="bar" class:indeterminate={t.progress == null}>
-      <i style:width="{(t.progress ?? 0.3) * 100}%"></i>
-    </div>
+    {#if t.progress != null}
+      <div class="bar"><i style:width="{t.progress * 100}%"></i></div>
+    {/if}
     <div class="detail">
       <span class="d">{detail}</span>
       <span class="app">{sizes}</span>
@@ -142,16 +142,5 @@
     border-radius: 2px;
     background: var(--island-accent);
     transition: width 0.9s linear;
-  }
-  .bar.indeterminate i {
-    animation: slide 1.4s ease-in-out infinite;
-  }
-  @keyframes slide {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(340%);
-    }
   }
 </style>

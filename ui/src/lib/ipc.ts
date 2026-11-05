@@ -29,6 +29,7 @@ export const mediaCommand = (command: MediaCommand) => call("media_command", { c
 export const adjustVolume = (delta: number) => call("adjust_volume", { delta });
 export const openMainWindow = () => call("open_main_window");
 export const shelfRequest = () => call("shelf_request");
+export const dismiss = () => call("dismiss_island");
 export const shelfRemove = (ids: number[]) => call("shelf_remove", { ids });
 export const shelfClear = () => call("shelf_clear");
 export const shelfOpen = (id: number) => call("shelf_open", { id });

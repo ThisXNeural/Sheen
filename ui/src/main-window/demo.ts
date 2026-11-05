@@ -61,6 +61,7 @@ export const settings: Settings = {
   noteShortcut: "ScrollLock",
   clipboardPeek: true,
   showTransfers: true,
+  islandScale: 1,
 };
 
 export const collections: Collections = {
@@ -219,4 +220,8 @@ export function setShortcut(shortcut: string) {
   if (/^[A-Z0-9]$/i.test(shortcut)) throw new Error(`"${shortcut}" needs Ctrl, Alt, Shift or Win`);
   settings.noteShortcut = shortcut;
   return shortcut;
+}
+
+export function setScale(scale: number) {
+  settings.islandScale = scale;
 }

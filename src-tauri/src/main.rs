@@ -94,6 +94,9 @@ fn main() {
             get_settings,
             set_theme,
             set_island_option,
+            set_island_scale,
+            dismiss_island,
+            suspend_hotkeys,
             open_main_window,
             music::library_tracks,
             music::library_status,
@@ -157,7 +160,8 @@ fn main() {
             });
 
             let (tx, rx) = channel::<Signal>();
-            let island = Island::new(IslandConfig::default());
+            let mut island = Island::new(IslandConfig::default());
+            island.handle(SheenEvent::SetScale(settings.island_scale), Instant::now());
             let note_shortcut = settings.note_shortcut.clone();
             let shared = Arc::new(Shared {
                 signals: tx.clone(),
@@ -185,13 +189,14 @@ fn main() {
             });
 
             let region = Arc::new(Mutex::new(HitRegion::new(TRANSITION)));
-            region.lock().unwrap().set_target(island.present().geometry.rect(), Instant::now());
-            hit_test::spawn(window.clone(), region.clone(), tx);
+            region.lock().unwrap().set_target(island.hit_rect(), Instant::now());
+            let watch_clicks = hit_test::WatchClicks::default();
+            hit_test::spawn(window.clone(), region.clone(), watch_clicks.clone(), tx);
 
             let handle = app.handle().clone();
             std::thread::Builder::new()
                 .name("sheen-reducer".into())
-                .spawn(move || reducer(island, rx, handle, shared, region))?;
+                .spawn(move || reducer(island, rx, handle, shared, region, watch_clicks))?;
 
             tray::create(app.handle())?;
             window.show()?;
@@ -269,6 +274,7 @@ fn reducer(
     app: AppHandle,
     shared: Arc<Shared>,
     region: Arc<Mutex<HitRegion>>,
+    watch_clicks: hit_test::WatchClicks,
 ) {
     loop {
         let timeout = island
@@ -292,7 +298,8 @@ fn reducer(
 
         if changed {
             let presentation = island.present();
-            region.lock().unwrap().set_target(presentation.geometry.rect(), Instant::now());
+            region.lock().unwrap().set_target(island.hit_rect(), Instant::now());
+            watch_clicks.store(island.panel_open(), std::sync::atomic::Ordering::Relaxed);
             *shared.presentation.lock().unwrap() = presentation.clone();
             let _ = app.emit_to(ISLAND_WINDOW, EV_PRESENTATION, presentation);
         }
@@ -361,6 +368,31 @@ fn set_island_option(app: AppHandle, state: Ctx, key: String, on: bool) -> Resul
         _ => return Err(format!("unknown option {key}")),
     }
     Ok(())
+}
+
+#[tauri::command]
+fn set_island_scale(app: AppHandle, state: Ctx, scale: f64) {
+    let scale = scale.clamp(sheen_core::geometry::MIN_SCALE, sheen_core::geometry::MAX_SCALE);
+    state.update_settings(&app, |s| s.island_scale = scale);
+    let _ = state.signals.send(Signal::Event(SheenEvent::SetScale(scale)));
+}
+
+/// Hide the island until the pointer comes back to where it was.
+#[tauri::command]
+fn dismiss_island(state: Ctx) {
+    let _ = state.signals.send(Signal::Event(SheenEvent::Dismiss));
+}
+
+/// While the shortcut recorder is listening, Sheen's own global shortcuts
+/// must not swallow the keys (e.g. Scroll Lock opening the note).
+#[tauri::command]
+fn suspend_hotkeys(state: Ctx, suspend: bool) -> Result<(), String> {
+    if suspend {
+        state.hotkeys.set(note::HOTKEY_ID, None)
+    } else {
+        let shortcut = state.settings.lock().unwrap().note_shortcut.clone();
+        note::apply_shortcut(&state, &shortcut).map(|_| ())
+    }
 }
 
 #[tauri::command]

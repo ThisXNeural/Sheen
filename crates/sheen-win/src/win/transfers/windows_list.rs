@@ -25,7 +25,6 @@ pub struct Win {
 pub struct Snapshot {
     pub windows: Vec<Win>,
     pub foreground: HWND,
-    pub foreground_exe: String,
 }
 
 impl Snapshot {
@@ -70,10 +69,7 @@ pub fn snapshot() -> Snapshot {
     let mut windows: Vec<Win> = Vec::with_capacity(256);
     unsafe {
         let _ = EnumWindows(Some(collect), LPARAM(&mut windows as *mut Vec<Win> as isize));
-        let foreground = GetForegroundWindow();
-        let mut pid = 0;
-        GetWindowThreadProcessId(foreground, Some(&mut pid));
-        Snapshot { windows, foreground, foreground_exe: exe_name(pid) }
+        Snapshot { windows, foreground: GetForegroundWindow() }
     }
 }
 

@@ -58,6 +58,8 @@ export interface Presentation {
   transfers: Transfer[];
   shelf: ShelfItem[];
   dragging: boolean;
+  shelfBadge: boolean;
+  scale: number;
 }
 
 export type MediaCommand =

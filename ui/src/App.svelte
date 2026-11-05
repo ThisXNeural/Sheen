@@ -8,6 +8,7 @@
   import Idle from "./lib/views/Idle.svelte";
   import MediaCompact from "./lib/views/MediaCompact.svelte";
   import MediaExpanded from "./lib/views/MediaExpanded.svelte";
+  import Icon from "./shared/Icon.svelte";
   import OsdView from "./lib/views/Osd.svelte";
   import Shelf from "./lib/views/Shelf.svelte";
   import TransferView from "./lib/views/Transfer.svelte";
@@ -22,6 +23,8 @@
     transfers: [],
     shelf: [],
     dragging: false,
+    shelfBadge: false,
+    scale: 1,
   });
   let artwork = $state<string | null>(null);
 
@@ -61,17 +64,29 @@
 
   function onClick() {
     if (p.mode === "mediaCompact") ipc.expand();
-    // The idle pill is the island's "home button": it opens the shelf when
-    // files are parked, otherwise the main window.
-    else if (p.mode === "idle") p.shelf.length ? ipc.shelfRequest() : ipc.openMainWindow();
+    // The idle pill is the island's "home button": it opens the main window.
+    else if (p.mode === "idle") ipc.openMainWindow();
   }
 
-  // The key decides when the content cross-fades: peek/compact variants of a
-  // mode re-render in place instead.
-  const contentKey = $derived(p.mode === "transfer" ? `transfer-${p.hovering}` : p.mode);
+  // The key decides when the content cross-fades: compact and hover (peek)
+  // variants of a mode are different layouts.
+  const contentKey = $derived(
+    p.mode === "transfer" || p.mode === "mediaCompact" ? `${p.mode}-${p.hovering}` : p.mode,
+  );
+  const visible = $derived(p.mode !== "hidden");
 </script>
 
 <main>
+  <div class="stage" style:transform="scale({p.scale})">
+  {#if visible && p.hovering}
+    <button
+      class="side close"
+      aria-label="Hide the island (hover here to bring it back)"
+      title="Hide — hover here to bring it back"
+      transition:fade={{ duration: 120 }}
+      onclick={() => ipc.dismiss()}><Icon name="x" size={12} stroke={2.6} /></button
+    >
+  {/if}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
     class="capsule"
@@ -86,9 +101,9 @@
     {#key contentKey}
       <div class="content" in:fade={{ duration: 180, delay: 90 }} out:fade={{ duration: 90 }}>
         {#if p.mode === "idle"}
-          <Idle shelfCount={p.shelf.length} />
+          <Idle />
         {:else if p.mode === "mediaCompact" && p.media}
-          <MediaCompact media={p.media} {artwork} transfer={p.transfers[0] ?? null} />
+          <MediaCompact media={p.media} {artwork} transfer={p.transfers[0] ?? null} peek={p.hovering} />
         {:else if p.mode === "transfer" && p.transfers.length}
           <TransferView transfers={p.transfers} peek={p.hovering} />
         {:else if p.mode === "shelf"}
@@ -101,6 +116,19 @@
       </div>
     {/key}
   </div>
+  {#if p.shelfBadge}
+    <button
+      class="side badge"
+      aria-label="Open the shelf ({p.shelf.length} files)"
+      title="Shelf · {p.shelf.length}"
+      transition:fade={{ duration: 160 }}
+      onclick={() => ipc.shelfRequest()}
+    >
+      <Icon name="shelf" size={14} />
+      <span class="count">{p.shelf.length}</span>
+    </button>
+  {/if}
+  </div>
 </main>
 
 <style>
@@ -109,6 +137,54 @@
     justify-content: center;
     /* Must equal sheen_core::geometry::TOP_MARGIN. */
     padding-top: 8px;
+  }
+
+  .stage {
+    position: relative;
+    /* Island size from settings, anchored at the top centre of the window
+       (8 px above this box), the same way sheen-core scales the hit area. */
+    transform-origin: 50% -8px;
+  }
+
+  /* Round buttons beside the capsule: close on the left, shelf on the right.
+     Their room is reserved by sheen_core::geometry::SIDE (8 px gap + 30 px). */
+  .side {
+    position: absolute;
+    top: 2px;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--island-bg);
+    color: var(--island-fg);
+    box-shadow: var(--island-shadow);
+  }
+  .close {
+    right: calc(100% + 8px);
+    color: var(--island-fg-dim);
+  }
+  .close:hover {
+    color: var(--island-fg);
+  }
+  .badge {
+    left: calc(100% + 8px);
+  }
+  .badge .count {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    box-sizing: border-box;
+    border-radius: 7px;
+    background: #0a84ff;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
   }
 
   .capsule {

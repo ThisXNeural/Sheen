@@ -24,12 +24,21 @@ const SLOW: Duration = Duration::from_millis(120);
 const NEAR: f64 = 120.0;
 const FRAME_REFRESH: Duration = Duration::from_secs(2);
 
-pub fn spawn(window: WebviewWindow, region: Arc<Mutex<HitRegion>>, signals: Sender<Signal>) {
+/// Set while a panel (media card, shelf) is open: clicks anywhere else close it.
+pub type WatchClicks = Arc<std::sync::atomic::AtomicBool>;
+
+pub fn spawn(
+    window: WebviewWindow,
+    region: Arc<Mutex<HitRegion>>,
+    watch_clicks: WatchClicks,
+    signals: Sender<Signal>,
+) {
     std::thread::Builder::new()
         .name("sheen-hit-test".into())
         .spawn(move || {
             let mut inside = false;
             let mut dragging = false;
+            let mut button_was_down = false;
             let mut frame = None;
             let mut refreshed = Instant::now();
             loop {
@@ -42,9 +51,17 @@ pub fn spawn(window: WebviewWindow, region: Arc<Mutex<HitRegion>>, signals: Send
                         return;
                     }
                 }
-                if dragging {
+                // Watch for a click elsewhere while a panel is open. Polled at
+                // display rate only during that time.
+                let watching = watch_clicks.load(std::sync::atomic::Ordering::Relaxed);
+                if dragging || watching {
                     delay = FAST;
                 }
+                let button = watching && sheen_win::mouse_button_down();
+                if button && !button_was_down && !inside && !dragging {
+                    let _ = signals.send(Signal::Event(SheenEvent::OutsideClick));
+                }
+                button_was_down = button;
                 // The window does not move, but monitor/DPI changes can still
                 // shift it; re-read its frame now and then instead of per tick.
                 if frame.is_none() || refreshed.elapsed() > FRAME_REFRESH {

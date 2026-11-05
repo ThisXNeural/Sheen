@@ -57,9 +57,11 @@ reasoning and the trade-offs that were accepted.
 ### Downloads and file transfers
 
 Windows has no API for reading another app's progress, so each source is read
-the way it exposes itself. The island only shows a transfer while its source
-window is out of view, for example when the browser or copy dialog is
-minimized or behind other windows.
+the way it exposes itself. Browser downloads always show. File Explorer and
+other progress dialogs show only while the dialog is minimized or behind other
+windows, because otherwise the dialog itself is already in front of you.
+Leftover `Unconfirmed *.crdownload` files from cancelled downloads are
+ignored, because a download only counts while its file keeps growing.
 
 | Source | How it's read | Shows |
 |---|---|---|
@@ -68,8 +70,10 @@ minimized or behind other windows.
 | File Explorer copy/move (incl. USB, network, phones) | the copy dialog's progress bar, through UI Automation | progress, ETA |
 | IDM, 7-Zip, WinRAR, installers | standard Win32 progress-bar dialogs (`PBM_GETPOS`) | progress, ETA |
 
-Browser downloads are detected in the Downloads folder (watched with
-`ReadDirectoryChangesW`, so it costs nothing while idle). Window-based
+Browser downloads are found in the Downloads folder (watched with
+`ReadDirectoryChangesW`, so it costs nothing while idle) and, for Chromium
+browsers, anywhere else through the browser's own record of active downloads.
+That record is re-read only when its file changes on disk. Window-based
 sources are polled every 1.5 s, which is one `EnumWindows` pass of well under
 a millisecond.
 
@@ -86,14 +90,24 @@ a millisecond.
 A transfer with no progress for 4 s shows as stalled instead of counting up.
 Unit tests cover steady speed, ±40% noise, stalls and speed changes.
 
+### Using the island
+
+* **Playing:** the island shrinks to just the artwork and level bars, with the
+  song's progress as a hairline along the bottom. Hover it for the title and
+  artist, and click it for the full card. Clicking anywhere else closes the
+  card at once.
+* **Hide:** hovering shows a small × beside the island, which hides it. Hover
+  the same spot at the top of the screen to bring it back.
+* **Size:** Settings → Island → Size (Small to Extra large).
+
 ### Shelf and clipboard
 
 * **Shelf.** While you drag files anywhere (detected through the shell's drag
   image), the island opens as a drop target. Files dropped on it stay parked:
   drag them back out to any app (the shell's own `SHDoDragDrop`, so they behave
   exactly like a drag from Explorer), double-click to open, or remove them.
-  While files are parked, the idle pill shows a count; click it to open the
-  shelf.
+  While files are parked, a small round shelf button with a count sits next
+  to the island; click it to open the shelf.
 * **Clipboard peek.** A small preview (text, image thumbnail or file names)
   appears when you copy something. It is event-driven
   (`AddClipboardFormatListener`). Content that password managers mark as

@@ -44,6 +44,10 @@ pub fn file_drag_active() -> bool {
     false
 }
 
+pub fn mouse_button_down() -> bool {
+    false
+}
+
 pub fn drag_files_out(_paths: &[PathBuf]) -> Result<DropOutcome, String> {
     Ok(DropOutcome::Cancelled)
 }

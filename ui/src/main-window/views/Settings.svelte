@@ -25,6 +25,18 @@
     setTheme(t);
   }
 
+  const sizes = [
+    { value: 0.85, label: "Small" },
+    { value: 1, label: "Medium" },
+    { value: 1.15, label: "Large" },
+    { value: 1.3, label: "Extra large" },
+  ];
+
+  function pickSize(scale: number) {
+    if (settings) settings.islandScale = scale;
+    api.setIslandScale(scale);
+  }
+
   function toggle(key: "clipboardPeek" | "showTransfers") {
     if (!settings) return;
     settings[key] = !settings[key];
@@ -62,12 +74,30 @@
     return [...mods, key].join("+");
   }
 
+  // Sheen's own shortcut (e.g. Scroll Lock) would otherwise be swallowed by
+  // the system before this page sees the key.
+  function startRecording() {
+    recording = true;
+    shortcutError = null;
+    api.suspendHotkeys(true);
+  }
+
+  function stopRecording() {
+    recording = false;
+    api.suspendHotkeys(false);
+  }
+
+  // Print Screen only produces a key-up event in browsers.
+  function recordUp(e: KeyboardEvent) {
+    if (recording && e.code === "PrintScreen") record(e);
+  }
+
   async function record(e: KeyboardEvent) {
     if (!recording) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") {
-      recording = false;
+      stopRecording();
       return;
     }
     const plain = !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
@@ -85,12 +115,14 @@
     } catch (err) {
       shortcutError = String(err).replace(/^Error:\s*/, "");
     }
+    // Re-register whatever is saved now (the new one, or the old on error).
+    api.suspendHotkeys(false);
   }
 
   const pretty = (s: string) => s.replace("ScrollLock", "Scroll Lock").replaceAll("+", " + ");
 </script>
 
-<svelte:window onkeydown={record} />
+<svelte:window onkeydown={record} onkeyup={recordUp} onblur={() => recording && stopRecording()} />
 
 <ViewHeader title="Settings" />
 <div class="page">
@@ -121,8 +153,24 @@
     <div class="group">
       <div class="row">
         <div class="text">
+          <div class="label">Size</div>
+          <div class="hint">How big the island is at the top of the screen.</div>
+        </div>
+        <div class="segmented" role="radiogroup" aria-label="Island size">
+          {#each sizes as size}
+            <button
+              role="radio"
+              aria-checked={settings?.islandScale === size.value}
+              class:on={settings?.islandScale === size.value}
+              onclick={() => pickSize(size.value)}>{size.label}</button
+            >
+          {/each}
+        </div>
+      </div>
+      <div class="row">
+        <div class="text">
           <div class="label">Downloads and file transfers</div>
-          <div class="hint">Show progress from browsers, IDM and File Explorer while their window is out of view.</div>
+          <div class="hint">Progress of browser downloads, IDM, and File Explorer copies (shown while the copy window is minimized or behind).</div>
         </div>
         <button
           class="switch"
@@ -162,7 +210,7 @@
             {:else}Opens the note from anywhere.{/if}
           </div>
         </div>
-        <button class="keys" class:recording onclick={() => ((recording = !recording), (shortcutError = null))}>
+        <button class="keys" class:recording onclick={() => (recording ? stopRecording() : startRecording())}>
           <Icon name="keyboard" size={15} />
           {recording ? "Recording…" : settings?.noteShortcut ? pretty(settings.noteShortcut) : "Off"}
         </button>

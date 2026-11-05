@@ -35,6 +35,8 @@ pub struct Settings {
     pub clipboard_peek: bool,
     /// Show background downloads and file copies in the island.
     pub show_transfers: bool,
+    /// Island size multiplier (0.8–1.3).
+    pub island_scale: f64,
 }
 
 impl Default for Settings {
@@ -46,6 +48,7 @@ impl Default for Settings {
             note_shortcut: "ScrollLock".into(),
             clipboard_peek: true,
             show_transfers: true,
+            island_scale: 1.0,
         }
     }
 }

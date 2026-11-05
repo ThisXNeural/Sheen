@@ -24,18 +24,6 @@ use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 
 const PARTIAL: &[&str] = &["crdownload", "part", "partial", "download"];
-const BROWSER_EXES: &[&str] = &[
-    "chrome.exe",
-    "msedge.exe",
-    "brave.exe",
-    "firefox.exe",
-    "opera.exe",
-    "vivaldi.exe",
-    "browser.exe",
-    "chromium.exe",
-    "librewolf.exe",
-    "waterfox.exe",
-];
 /// Chromium-family profile roots, relative to %LOCALAPPDATA% / %APPDATA%.
 const CHROMIUM_ROOTS: &[(&str, bool, &str)] = &[
     ("Google\\Chrome\\User Data", true, "Chrome"),
@@ -147,12 +135,29 @@ struct Known {
     total: Option<u64>,
 }
 
+/// A download only counts while its file keeps growing. Browsers leave
+/// `Unconfirmed 12345.crdownload` files behind after cancelled or crashed
+/// downloads; those never change and must not show up forever.
+const ACTIVE_WINDOW: Duration = Duration::from_secs(15);
+/// A file this fresh is treated as just started even before it grows.
+const FRESH: Duration = Duration::from_secs(10);
+/// Minimum gap between reads of the browsers' databases.
+const LOOKUP_EVERY: Duration = Duration::from_secs(2);
+
+struct Seen {
+    size: u64,
+    changed: Instant,
+}
+
 #[derive(Default)]
 pub struct BrowserProvider {
     downloads: Option<PathBuf>,
+    /// In-progress downloads the browsers reported, by temp-file path.
     known: HashMap<PathBuf, Known>,
+    seen: HashMap<PathBuf, Seen>,
     histories: Vec<(PathBuf, String)>,
     histories_at: Option<Instant>,
+    history_mtimes: HashMap<PathBuf, std::time::SystemTime>,
     last_lookup: Option<Instant>,
     active: bool,
 }
@@ -162,63 +167,104 @@ impl BrowserProvider {
         self.active
     }
 
-    pub fn poll(&mut self, snap: &Snapshot) -> Vec<TransferSample> {
+    pub fn poll(&mut self, _snap: &Snapshot) -> Vec<TransferSample> {
         if self.downloads.is_none() {
             self.downloads = downloads_dir();
         }
-        let Some(dir) = self.downloads.clone() else { return Vec::new() };
-        let partials: Vec<(PathBuf, u64)> = std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|e| is_partial(&e.file_name().to_string_lossy()))
-            .filter_map(|e| Some((e.path(), e.metadata().ok()?.len())))
-            .collect();
-        self.active = !partials.is_empty();
-        self.known.retain(|p, _| partials.iter().any(|(q, _)| q == p));
-        if partials.is_empty() {
-            return Vec::new();
-        }
 
-        // Look up totals for downloads we have not identified yet (at most
-        // every 2 s, since it touches the browsers' databases).
-        let unknown =
-            partials.iter().any(|(p, _)| !self.known.get(p).is_some_and(|k| k.total.is_some()));
-        if unknown && self.last_lookup.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
+        // Chromium records every download in its History database; reading
+        // it finds downloads saved to any folder and gives their real size.
+        // Only re-read when a database actually changed on disk.
+        if self.histories_changed() && self.last_lookup.is_none_or(|t| t.elapsed() >= LOOKUP_EVERY)
+        {
             self.last_lookup = Some(Instant::now());
             self.lookup_chromium();
         }
 
-        let in_view = BROWSER_EXES.contains(&snap.foreground_exe.as_str());
-        partials
-            .into_iter()
-            .map(|(path, size)| {
-                let known = self.known.get(&path).cloned().unwrap_or_else(|| guess(&path));
-                TransferSample {
-                    id: transfer_id(("download", &path)),
-                    kind: TransferKind::Download,
-                    app: known.app,
-                    name: known.name,
-                    done: size,
-                    total: known.total.filter(|t| *t >= size),
-                    unit: TransferUnit::Bytes,
-                    source_in_view: in_view,
-                }
-            })
-            .collect()
+        let mut candidates: Vec<PathBuf> = self
+            .downloads
+            .iter()
+            .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+            .filter(|e| is_partial(&e.file_name().to_string_lossy()))
+            .map(|e| e.path())
+            .collect();
+        for path in self.known.keys() {
+            if !candidates.contains(path) {
+                candidates.push(path.clone());
+            }
+        }
+
+        let now = Instant::now();
+        let mut out = Vec::new();
+        let mut alive = Vec::new();
+        for path in candidates {
+            let Ok(meta) = std::fs::metadata(&path) else { continue };
+            let size = meta.len();
+            alive.push(path.clone());
+            let seen = self.seen.entry(path.clone()).or_insert_with(|| {
+                let fresh = meta
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.elapsed().ok())
+                    .is_some_and(|age| age < FRESH);
+                Seen { size, changed: if fresh { now } else { now - ACTIVE_WINDOW * 2 } }
+            });
+            if seen.size != size {
+                seen.size = size;
+                seen.changed = now;
+            }
+            if now.duration_since(seen.changed) > ACTIVE_WINDOW {
+                continue; // abandoned leftover, or paused for a while
+            }
+            let known = self.known.get(&path).cloned().unwrap_or_else(|| guess(&path));
+            out.push(TransferSample {
+                id: transfer_id(("download", &path)),
+                kind: TransferKind::Download,
+                app: known.app,
+                name: known.name,
+                done: size,
+                total: known.total.filter(|t| *t >= size),
+                unit: TransferUnit::Bytes,
+                // A download is worth showing even with the browser in front.
+                source_in_view: false,
+            });
+        }
+        self.seen.retain(|p, _| alive.contains(p));
+        self.active = !out.is_empty();
+        out
     }
 
-    fn lookup_chromium(&mut self) {
+    /// Whether any browser's History file changed since we last looked.
+    fn histories_changed(&mut self) -> bool {
         if self.histories_at.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
             self.histories = find_histories();
             self.histories_at = Some(Instant::now());
         }
+        let mut changed = false;
+        for (db, _) in &self.histories {
+            let Ok(mtime) = std::fs::metadata(db).and_then(|m| m.modified()) else { continue };
+            if self.history_mtimes.insert(db.clone(), mtime) != Some(mtime) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn lookup_chromium(&mut self) {
+        let mut known = HashMap::new();
         for (db, app) in &self.histories {
             let Some(rows) = sqlite::query(
                 db,
                 "SELECT current_path, target_path, total_bytes FROM downloads WHERE state = 0",
                 &[true, true, false],
             ) else {
+                // Unreadable right now (mid-write): keep what we knew.
+                known.extend(
+                    self.known
+                        .iter()
+                        .filter(|(_, k)| k.app == *app)
+                        .map(|(p, k)| (p.clone(), k.clone())),
+                );
                 continue;
             };
             for row in rows {
@@ -226,16 +272,20 @@ impl BrowserProvider {
                 else {
                     continue;
                 };
+                if current.is_empty() {
+                    continue;
+                }
                 let name = Path::new(target)
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.known.insert(
+                known.insert(
                     PathBuf::from(current),
                     Known { app: app.clone(), name, total: (*total > 0).then_some(*total as u64) },
                 );
             }
         }
+        self.known = known;
     }
 }
 

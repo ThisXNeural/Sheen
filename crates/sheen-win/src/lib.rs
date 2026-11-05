@@ -125,6 +125,11 @@ pub fn file_drag_active() -> bool {
     imp::file_drag_active()
 }
 
+/// A mouse button is held somewhere on the desktop.
+pub fn mouse_button_down() -> bool {
+    imp::mouse_button_down()
+}
+
 /// Drag files out to another app. Call on the UI thread while the mouse
 /// button is held; returns when the drop is done.
 pub fn drag_files_out(paths: &[PathBuf]) -> DropOutcome {

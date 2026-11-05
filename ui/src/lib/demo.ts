@@ -5,10 +5,10 @@
 import type { Geometry, MediaInfo, Presentation, ShelfItem, Transfer } from "./types";
 
 const G = {
-  idle: { width: 120, height: 30, radius: 15 },
-  idleShelf: { width: 150, height: 30, radius: 15 },
-  mediaCompact: { width: 230, height: 36, radius: 18 },
-  mediaPeek: { width: 246, height: 40, radius: 20 },
+  idle: { width: 110, height: 30, radius: 15 },
+  mediaCompact: { width: 124, height: 34, radius: 17 },
+  mediaCompactTransfer: { width: 184, height: 34, radius: 17 },
+  mediaPeek: { width: 320, height: 62, radius: 24 },
   osd: { width: 300, height: 44, radius: 22 },
   osdTall: { width: 320, height: 64, radius: 26 },
   transfer: { width: 250, height: 36, radius: 18 },
@@ -17,7 +17,9 @@ const G = {
   expanded: { width: 400, height: 156, radius: 34 },
 } satisfies Record<string, Geometry>;
 
-const long = new URLSearchParams(location.search).has("long");
+const params = new URLSearchParams(location.search);
+const long = params.has("long");
+const scale = Number(params.get("scale") ?? 1);
 
 const media: MediaInfo = {
   sourceApp: "Spotify.exe",
@@ -80,13 +82,23 @@ const base: Presentation = {
   transfers: [],
   shelf: [],
   dragging: false,
+  shelfBadge: false,
+  scale,
 };
 
 const steps: Record<string, Presentation> = {
   idle: { ...base },
-  idleShelf: { ...base, geometry: G.idleShelf, shelf },
+  idleShelf: { ...base, shelf, shelfBadge: true },
+  idleHover: { ...base, hovering: true },
   mediaCompact: { ...base, mode: "mediaCompact", geometry: G.mediaCompact, media },
-  mediaTransfer: { ...base, mode: "mediaCompact", geometry: G.mediaCompact, media, transfers: [download] },
+  mediaPeek: { ...base, mode: "mediaCompact", geometry: G.mediaPeek, hovering: true, media, shelf, shelfBadge: true },
+  mediaTransfer: {
+    ...base,
+    mode: "mediaCompact",
+    geometry: G.mediaCompactTransfer,
+    media,
+    transfers: [download],
+  },
   osd: { ...base, mode: "osd", geometry: G.osd, media, osd: { kind: "volume", level: 0.62, muted: false } },
   mic: { ...base, mode: "osd", geometry: G.osd, osd: { kind: "micMute", muted: true } },
   clipText: {
@@ -133,7 +145,7 @@ export function startDemo(onPresentation: (p: Presentation) => void) {
     onPresentation(steps[pinned]);
     return () => {};
   }
-  const cycle = ["idle", "mediaCompact", "osd", "transfer", "expanded", "clipText", "shelfDrop", "idleShelf"];
+  const cycle = ["idle", "mediaCompact", "mediaPeek", "osd", "transfer", "expanded", "clipText", "shelfDrop", "idleShelf"];
   let i = 0;
   onPresentation(steps[cycle[0]]);
   const id = setInterval(() => onPresentation(steps[cycle[++i % cycle.length]]), 2200);

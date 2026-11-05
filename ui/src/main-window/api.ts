@@ -76,6 +76,7 @@ export interface Settings {
   noteShortcut: string;
   clipboardPeek: boolean;
   showTransfers: boolean;
+  islandScale: number;
 }
 
 function on<T>(event: string, cb: (payload: T) => void): Promise<UnlistenFn> {
@@ -125,3 +126,7 @@ export const setIslandOption = (key: "clipboardPeek" | "showTransfers", on: bool
 export const setNoteShortcut = (shortcut: string) =>
   call<string>("set_note_shortcut", { shortcut }, () => demo.setShortcut(shortcut));
 export const toggleNote = () => call("note_toggle", undefined, () => undefined);
+export const setIslandScale = (scale: number) =>
+  call("set_island_scale", { scale }, () => demo.setScale(scale));
+/** Pause Sheen's own global shortcuts while recording a new one. */
+export const suspendHotkeys = (suspend: boolean) => call("suspend_hotkeys", { suspend }, () => undefined);

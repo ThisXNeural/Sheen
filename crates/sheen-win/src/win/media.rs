@@ -194,19 +194,46 @@ fn read_artwork(session: &Session) -> windows::core::Result<Option<String>> {
     };
     let stream = reference.OpenReadAsync()?.join()?;
     let size = stream.Size()?;
-    if size == 0 || size > MAX_ARTWORK_BYTES {
+    if size > MAX_ARTWORK_BYTES {
         return Ok(None);
     }
-    let buffer = Buffer::Create(size as u32)?;
-    let filled = stream.ReadAsync(&buffer, size as u32, InputStreamOptions::None)?.join()?;
-    let reader = DataReader::FromBuffer(&filled)?;
-    let mut bytes = vec![0u8; filled.Length()? as usize];
-    reader.ReadBytes(&mut bytes)?;
-
-    let mime = stream.ContentType().map(|s| s.to_string()).unwrap_or_default();
-    let mime = if mime.starts_with("image/") { mime } else { "image/png".into() };
+    // Streams from other apps may deliver the image in several pieces, and
+    // some report no size at all: keep reading until the end.
+    let mut bytes: Vec<u8> = Vec::with_capacity(size as usize);
+    loop {
+        let want =
+            if size > 0 { (size - bytes.len() as u64).min(256 * 1024) as u32 } else { 64 * 1024 };
+        if want == 0 || bytes.len() as u64 >= MAX_ARTWORK_BYTES {
+            break;
+        }
+        let buffer = Buffer::Create(want)?;
+        let filled = stream.ReadAsync(&buffer, want, InputStreamOptions::ReadAhead)?.join()?;
+        let n = filled.Length()? as usize;
+        if n == 0 {
+            break;
+        }
+        let mut chunk = vec![0u8; n];
+        DataReader::FromBuffer(&filled)?.ReadBytes(&mut chunk)?;
+        bytes.extend_from_slice(&chunk);
+    }
+    let Some(mime) = image_mime(&bytes) else {
+        return Ok(None);
+    };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(Some(format!("data:{mime};base64,{b64}")))
+}
+
+/// Identify the image by its first bytes (apps often leave the content type
+/// empty or wrong). Anything else is not usable as artwork.
+fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        [b'G', b'I', b'F', b'8', ..] => Some("image/gif"),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("image/webp"),
+        [b'B', b'M', ..] => Some("image/bmp"),
+        _ => None,
+    }
 }
 
 fn execute(session: &Session, command: MediaCommand) -> windows::core::Result<()> {
@@ -233,4 +260,18 @@ fn hash_str(s: &str) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
     h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_mime;
+
+    #[test]
+    fn sniffs_image_types() {
+        assert_eq!(image_mime(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(image_mime(&[0x89, b'P', b'N', b'G', 13, 10]), Some("image/png"));
+        assert_eq!(image_mime(b"RIFF1234WEBPVP8"), Some("image/webp"));
+        assert_eq!(image_mime(b"<html>"), None);
+        assert_eq!(image_mime(&[]), None);
+    }
 }
