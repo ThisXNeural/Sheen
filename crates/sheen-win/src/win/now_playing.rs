@@ -135,9 +135,7 @@ fn publish(
     }
 
     let timeline = SystemMediaTransportControlsTimelineProperties::new()?;
-    let ts = |ms: u64| TimeSpan {
-        Duration: ms as i64 * 10_000,
-    };
+    let ts = |ms: u64| TimeSpan { Duration: ms as i64 * 10_000 };
     timeline.SetStartTime(ts(0))?;
     timeline.SetMinSeekTime(ts(0))?;
     timeline.SetPosition(ts(np.position_ms))?;

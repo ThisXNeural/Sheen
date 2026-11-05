@@ -1,14 +1,15 @@
 # Sheen
 
-A Dynamic Island for Windows, with a small built-in music player. It's a
-capsule at the top of the screen that changes shape for whatever is happening:
-media playback, volume and other system OSDs, and later a file shelf,
-clipboard peek and scratchpad.
+A Dynamic Island for Windows, with a built-in music player. It's a capsule
+at the top of the screen that changes shape for whatever is happening:
+media playback, volume, background downloads and file copies, a file shelf
+you can drag things onto, clipboard peeks, and a quick note on a shortcut.
 
-> **Status:** early scaffold. The architecture and the first vertical slice
-> (media capsule, volume OSD, full-screen hiding, no-focus/click-through window)
-> are in place. It has only been compile-checked for Windows so far, so expect
-> rough edges on real hardware.
+> **Status:** early. The Rust code is unit-tested where it is platform
+> independent and compile- and lint-checked for Windows. The UI is
+> layout-tested end to end in Chromium. The Windows integrations (SMTC, UI
+> Automation, hotkeys, shell drag-and-drop) have not been run on real Windows
+> yet, so expect rough edges there.
 
 ## Stack
 
@@ -27,11 +28,12 @@ reasoning and the trade-offs that were accepted.
 
 | Path | Role |
 |---|---|
-| `crates/sheen-core` | Pure Rust, no OS or UI deps. Event model, the `Island` state machine (priorities, OSD timeouts, expand/collapse), capsule geometry and hit region. Unit-tested on any OS. |
-| `crates/sheen-win` | Windows services, one thread each: SMTC media sessions, Core Audio volume, full-screen detection, Win32 window styles, and publishing the built-in player to SMTC. Stubs on other OSes. |
-| `crates/sheen-player` | Built-in player: library scan with tag cache (lofty), queue/shuffle/repeat, playback thread (rodio). Queue and library logic are unit-tested on any OS. |
+| `crates/sheen-core` | Pure Rust, no OS or UI deps. Event model, the `Island` state machine (priorities, timeouts, panels), capsule geometry and hit region, the transfer ETA estimator, shortcut parsing. Unit-tested on any OS. |
+| `crates/sheen-win` | Windows services, one thread each: SMTC media sessions, Core Audio volume, full-screen detection, transfers (downloads/copies), clipboard listener, global hotkeys, shell drag-and-drop, Win32 window styles, and publishing the built-in player to SMTC. Stubs on other OSes. |
+| `crates/sheen-player` | Built-in player: library scan with tag cache (lofty), cover thumbnails, playlists and liked songs, queue/shuffle/repeat, playback thread (rodio). Logic is unit-tested on any OS. |
 | `src-tauri` | Thin shell that wires the services to the core and the core to the webview, and owns hit-testing. |
-| `ui` | Svelte 5 front-end with two entry points: `index.html` (island) and `main.html` (library, player and settings). Opened in a plain browser, both run against a demo backend. |
+| `ui` | Svelte 5 front-end with three entry points: `index.html` (island), `main.html` (library, player, settings) and `note.html` (quick note). In a plain browser they run against demo backends. |
+| `tests/e2e` | Playwright layout tests over every view, island mode, theme and window size. |
 
 ### Window model
 
@@ -52,8 +54,82 @@ reasoning and the trade-offs that were accepted.
   D3D/presentation mode, or when the foreground window covers the primary
   monitor.
 
+### Downloads and file transfers
+
+Windows has no API for reading another app's progress, so each source is read
+the way it exposes itself. The island only shows a transfer while its source
+window is out of view, for example when the browser or copy dialog is
+minimized or behind other windows.
+
+| Source | How it's read | Shows |
+|---|---|---|
+| Chrome, Edge, Brave, Opera, Vivaldi | the `.crdownload` file's size, plus the expected size from the browser's `History` database (read in place with Windows' own `winsqlite3.dll`) | progress, speed, ETA |
+| Firefox | the `.part` file's size | size and speed (Firefox doesn't record the total until the download is done) |
+| File Explorer copy/move (incl. USB, network, phones) | the copy dialog's progress bar, through UI Automation | progress, ETA |
+| IDM, 7-Zip, WinRAR, installers | standard Win32 progress-bar dialogs (`PBM_GETPOS`) | progress, ETA |
+
+Browser downloads are detected in the Downloads folder (watched with
+`ReadDirectoryChangesW`, so it costs nothing while idle). Window-based
+sources are polled every 1.5 s, which is one `EnumWindows` pass of well under
+a millisecond.
+
+**ETA.** A naive `remaining / speed` jumps around, so the estimate (in
+`sheen-core/src/eta.rs`) works in three layers:
+
+1. A Kalman filter tracks throughput. Its noise is relative to the rate, so it
+   adapts the same way at 50 KB/s and at 500 MB/s.
+2. The filtered rate is blended with the average since the start.
+3. The shown time counts down smoothly while new estimates agree with it
+   (within 15%). When they disagree, it eases 30% of the way toward the new
+   estimate each second, so it never jumps.
+
+A transfer with no progress for 4 s shows as stalled instead of counting up.
+Unit tests cover steady speed, ±40% noise, stalls and speed changes.
+
+### Shelf and clipboard
+
+* **Shelf.** While you drag files anywhere (detected through the shell's drag
+  image), the island opens as a drop target. Files dropped on it stay parked:
+  drag them back out to any app (the shell's own `SHDoDragDrop`, so they behave
+  exactly like a drag from Explorer), double-click to open, or remove them.
+  While files are parked, the idle pill shows a count; click it to open the
+  shelf.
+* **Clipboard peek.** A small preview (text, image thumbnail or file names)
+  appears when you copy something. It is event-driven
+  (`AddClipboardFormatListener`). Content that password managers mark as
+  private is never read.
+
+### Quick note
+
+Press **Scroll Lock** (changeable in Settings → Quick note, recorded by
+pressing the keys) and a small note card drops down below the island. Text
+autosaves to `note.txt` in Sheen's data folder. Esc or the shortcut closes it.
+It also closes when you click elsewhere, unless pinned. The window is created
+on first use and then only hidden, so later opens are instant.
+
 ### Built-in player
 
+* **Library views:** Songs (sortable, searchable), Albums (grid and album
+  page), Artists, Liked Songs and Playlists, each with a rounded cover
+  thumbnail next to the title.
+* **Playback:** play/pause, next/previous, seek, shuffle, repeat (all/one),
+  volume and mute, and an "Up next" queue with Play next, Add to queue, jump
+  and remove. The session (queue, track, position, modes) is restored on
+  start.
+* **Right-click menu:** works on one or several selected songs (Ctrl/Shift
+  click): play, play next, add to queue, add to a playlist (or a new one),
+  like, go to album or artist, show in Explorer.
+* **Keyboard:**
+  * Space: play/pause
+  * Ctrl+←/→: previous/next
+  * Ctrl+↑/↓: volume
+  * Ctrl+F: search
+  * Ctrl+L: like
+  * Enter: play the selected song
+* **Cover art:** the embedded picture, or `cover.jpg`/`folder.png` etc. next
+  to the files. Covers are downscaled once to small JPEGs, cached on disk, and
+  served to `<img>` tags through a `sheen-art://` protocol, so they load
+  lazily and are never sent as base64 over IPC.
 * **Formats:** MP3, FLAC, AAC/M4A, Ogg Vorbis and WAV. Only these decoders are compiled in.
 * **Library:** scans the music folder (defaults to the Windows Music folder)
   in the background. Tags are cached in `library.json`, and a file is only
@@ -91,6 +167,7 @@ pnpm dev              # UI only, in any browser, with a demo backend
                       #   /           island; ?mode=idle|mediaCompact|osd|expanded pins a state
                       #   /main.html  library/player window
 cargo test -p sheen-core -p sheen-player
+pnpm test:e2e         # layout tests: builds the UI and drives it in Chromium
 pnpm check            # svelte-check / TypeScript
 pnpm tauri build      # NSIS + MSI installers
 ```
@@ -101,6 +178,22 @@ From Linux/macOS you can still type-check the whole Windows build:
 rustup target add x86_64-pc-windows-msvc
 cargo clippy --workspace --target x86_64-pc-windows-msvc
 ```
+
+### UI tests
+
+`pnpm test:e2e` opens every main-window page, island mode and the note in
+light and dark themes, at the minimum, default and a large window size, with
+long and right-to-left (Persian) names. On every rendered element it checks:
+
+* **escape:** nothing is cut off by a clipping ancestor or the window edge.
+* **spill:** no element sticks out of its parent.
+* **text-spill:** no text runs past its own box.
+* **clipped-text:** text is never clipped without an ellipsis or line clamp.
+* **overlap:** flex and grid children never overlap.
+* **squashed:** nothing with text is squeezed to zero size.
+* **icon:** every icon renders inside its 24×24 box.
+
+A self-test makes sure the checker catches each of these problems.
 
 ## Roadmap
 
@@ -117,7 +210,9 @@ cargo clippy --workspace --target x86_64-pc-windows-msvc
 - [x] Published to SMTC: media keys, Windows flyout and island
 - [x] Main window (library, player bar, settings) created on demand; tray icon
 - [x] Light/dark follows Windows, with an in-app override
-- [ ] Gapless playback, playlists, album view
+- [x] Albums, artists, playlists, liked songs, queue panel, context menus
+- [x] Cover thumbnails (embedded or folder art), session restore
+- [ ] Gapless playback, playlist drag-to-reorder
 
 **Phase 1: verify on hardware and polish**
 - [ ] Verify on Windows 10 and 11: focus behaviour with WebView2, click-through, multi-DPI
@@ -133,11 +228,13 @@ cargo clippy --workspace --target x86_64-pc-windows-msvc
 - [ ] Suppress the native volume flyout (no public API, needs research)
 - [ ] Output device switcher (speakers ↔ headphones)
 
-**Phase 3: Productivity shelf**
-- [ ] Drop shelf (global drag detection → open shelf → OLE drag back out)
-- [ ] Clipboard peek (`AddClipboardFormatListener`)
-- [ ] Micro scratchpad. This one needs a deliberate focus hand-off, because the
-      window is otherwise non-activating.
+**Phase 3: Productivity**
+- [x] Drop shelf (global drag detection → drop target → shell drag back out)
+- [x] Clipboard peek (`AddClipboardFormatListener`)
+- [x] Quick note on a global shortcut
+- [x] Downloads and file transfers with a smoothed ETA
+- [ ] Downloads saved outside the Downloads folder; a browser extension for
+      exact totals in Firefox
 
 ## License
 

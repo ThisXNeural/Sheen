@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Icon from "../../shared/Icon.svelte";
   import * as ipc from "../ipc";
   import type { MediaInfo, Osd } from "../types";
   import OsdView from "./Osd.svelte";
@@ -51,8 +52,8 @@
       <div class="art placeholder"></div>
     {/if}
     <div class="meta">
-      <div class="title">{media.title}</div>
-      <div class="artist">{media.artist}</div>
+      <div class="title" dir="auto">{media.title}</div>
+      <div class="artist" dir="auto">{media.artist}</div>
     </div>
   </div>
 
@@ -68,15 +69,19 @@
   {/if}
 
   <div class="controls">
-    <button aria-label="Previous" onclick={() => ipc.mediaCommand({ type: "previous" })}>⏮</button>
+    <button aria-label="Previous" onclick={() => ipc.mediaCommand({ type: "previous" })}>
+      <Icon name="previous" size={20} filled />
+    </button>
     <button
       class="play"
       aria-label={media.playing ? "Pause" : "Play"}
       onclick={() => ipc.mediaCommand({ type: "togglePlayPause" })}
     >
-      {media.playing ? "⏸" : "▶"}
+      <Icon name={media.playing ? "pause" : "play"} size={24} filled />
     </button>
-    <button aria-label="Next" onclick={() => ipc.mediaCommand({ type: "next" })}>⏭</button>
+    <button aria-label="Next" onclick={() => ipc.mediaCommand({ type: "next" })}>
+      <Icon name="next" size={20} filled />
+    </button>
   </div>
 </div>
 
@@ -165,11 +170,12 @@
   }
   .controls {
     display: flex;
+    align-items: center;
     justify-content: center;
-    gap: 28px;
-    font-size: 18px;
+    gap: 30px;
   }
-  .play {
-    font-size: 22px;
+  .controls button {
+    display: grid;
+    place-items: center;
   }
 </style>

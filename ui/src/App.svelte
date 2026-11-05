@@ -9,6 +9,8 @@
   import MediaCompact from "./lib/views/MediaCompact.svelte";
   import MediaExpanded from "./lib/views/MediaExpanded.svelte";
   import OsdView from "./lib/views/Osd.svelte";
+  import Shelf from "./lib/views/Shelf.svelte";
+  import TransferView from "./lib/views/Transfer.svelte";
 
   // Rendered before the first state arrives from Rust.
   let p = $state<Presentation>({
@@ -17,6 +19,9 @@
     hovering: false,
     media: null,
     osd: null,
+    transfers: [],
+    shelf: [],
+    dragging: false,
   });
   let artwork = $state<string | null>(null);
 
@@ -46,17 +51,24 @@
     return () => subs.forEach((s) => s.then((unlisten) => unlisten()));
   });
 
-  // Scroll on the capsule changes volume without opening anything.
+  // Scroll on the capsule changes volume without opening anything (the
+  // shelf scrolls its items instead).
   function onWheel(e: WheelEvent) {
+    if (p.mode === "shelf") return;
     e.preventDefault();
     ipc.adjustVolume(e.deltaY < 0 ? 0.02 : -0.02);
   }
 
   function onClick() {
     if (p.mode === "mediaCompact") ipc.expand();
-    // The idle pill is the island's "home button": it opens the main window.
-    else if (p.mode === "idle") ipc.openMainWindow();
+    // The idle pill is the island's "home button": it opens the shelf when
+    // files are parked, otherwise the main window.
+    else if (p.mode === "idle") p.shelf.length ? ipc.shelfRequest() : ipc.openMainWindow();
   }
+
+  // The key decides when the content cross-fades: peek/compact variants of a
+  // mode re-render in place instead.
+  const contentKey = $derived(p.mode === "transfer" ? `transfer-${p.hovering}` : p.mode);
 </script>
 
 <main>
@@ -71,12 +83,16 @@
     onwheel={onWheel}
     onclick={onClick}
   >
-    {#key p.mode}
+    {#key contentKey}
       <div class="content" in:fade={{ duration: 180, delay: 90 }} out:fade={{ duration: 90 }}>
         {#if p.mode === "idle"}
-          <Idle />
+          <Idle shelfCount={p.shelf.length} />
         {:else if p.mode === "mediaCompact" && p.media}
-          <MediaCompact media={p.media} {artwork} />
+          <MediaCompact media={p.media} {artwork} transfer={p.transfers[0] ?? null} />
+        {:else if p.mode === "transfer" && p.transfers.length}
+          <TransferView transfers={p.transfers} peek={p.hovering} />
+        {:else if p.mode === "shelf"}
+          <Shelf items={p.shelf} dragging={p.dragging} />
         {:else if p.mode === "osd" && p.osd}
           <OsdView osd={p.osd} />
         {:else if p.mode === "expanded" && p.media}

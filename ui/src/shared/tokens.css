@@ -67,3 +67,10 @@ button {
   padding: 0;
   cursor: pointer;
 }
+
+/* Right-to-left names (Persian, Arabic, Hebrew) keep their own direction for
+   correct shaping and ellipsis, but line up with the rest of a left-to-right
+   layout. Text the user types keeps natural alignment. */
+:where([dir="auto"]):not(input, textarea) {
+  text-align: left;
+}

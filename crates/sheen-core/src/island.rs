@@ -1,15 +1,20 @@
 //! The island reducer: folds [`SheenEvent`]s into a [`Presentation`].
 //!
 //! Priority, highest first:
-//! 1. **Hidden** — a full-screen app is in the foreground.
-//! 2. **Expanded** — the user explicitly opened the media card. An OSD arriving
-//!    now is shown *inside* the card instead of collapsing it.
-//! 3. **Osd** — a transient system notification, for `osd_duration`.
-//! 4. **MediaCompact** — something is playing / paused in SMTC.
-//! 5. **Idle** — nothing to show (or Hidden, if the idle pill is disabled).
+//! 1. **Hidden**: a full-screen app is in the foreground.
+//! 2. **Shelf**: a file drag is in progress (the island becomes a drop
+//!    target), or the user opened the shelf.
+//! 3. **Expanded**: the user opened the media card. An OSD arriving now is
+//!    shown *inside* the card instead of collapsing it.
+//! 4. **Osd**: a transient notification (volume, clipboard, ...).
+//! 5. **MediaCompact**: something is playing or paused. Background transfers
+//!    show as a hairline progress bar on it.
+//! 6. **Transfer**: a download or copy whose source window is out of view.
+//! 7. **Idle**: nothing to show (or Hidden, if the idle pill is disabled).
 
-use crate::event::{MediaInfo, OsdKind, SheenEvent};
+use crate::event::{MediaInfo, OsdKind, SheenEvent, ShelfItem};
 use crate::geometry::Geometry;
+use crate::transfers::{Transfer, TransferTracker};
 use serde::Serialize;
 use std::time::{Duration, Instant};
 
@@ -17,7 +22,7 @@ use std::time::{Duration, Instant};
 pub struct IslandConfig {
     /// How long an OSD stays on screen after the *last* related event.
     pub osd_duration: Duration,
-    /// Grace period before the expanded card collapses once the pointer leaves.
+    /// Grace period before an open panel collapses once the pointer leaves.
     pub collapse_delay: Duration,
     /// Show a small pill when there is nothing else to display.
     pub show_idle_pill: bool,
@@ -39,8 +44,10 @@ pub enum Mode {
     Hidden,
     Idle,
     MediaCompact,
+    Transfer,
     Osd,
     Expanded,
+    Shelf,
 }
 
 /// Everything the UI needs to render one frame of the island.
@@ -55,12 +62,24 @@ pub struct Presentation {
     /// Active OSD. In `Osd` mode it is the main content; in `Expanded` mode it
     /// is rendered as an inline overlay.
     pub osd: Option<OsdKind>,
+    /// Transfers to show (empty when hidden).
+    pub transfers: Vec<Transfer>,
+    pub shelf: Vec<ShelfItem>,
+    /// A file drag is in progress: the shelf is acting as a drop target.
+    pub dragging: bool,
 }
 
 #[derive(Debug, Clone)]
 struct ActiveOsd {
     kind: OsdKind,
     until: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Panel {
+    None,
+    Media,
+    Shelf,
 }
 
 #[derive(Debug, Clone)]
@@ -70,8 +89,11 @@ pub struct Island {
     osd: Option<ActiveOsd>,
     fullscreen: bool,
     hovering: bool,
-    expanded: bool,
+    panel: Panel,
     collapse_at: Option<Instant>,
+    transfers: TransferTracker,
+    file_drag: bool,
+    shelf: Vec<ShelfItem>,
 }
 
 impl Island {
@@ -82,8 +104,11 @@ impl Island {
             osd: None,
             fullscreen: false,
             hovering: false,
-            expanded: false,
+            panel: Panel::None,
             collapse_at: None,
+            transfers: TransferTracker::default(),
+            file_drag: false,
+            shelf: Vec::new(),
         }
     }
 
@@ -92,16 +117,13 @@ impl Island {
         let before = self.present();
         match event {
             SheenEvent::Media(media) => {
-                if media.is_none() {
+                if media.is_none() && self.panel == Panel::Media {
                     self.collapse();
                 }
                 self.media = media;
             }
             SheenEvent::Osd(kind) => {
-                self.osd = Some(ActiveOsd {
-                    kind,
-                    until: now + self.config.osd_duration,
-                });
+                self.osd = Some(ActiveOsd { kind, until: now + self.config.osd_duration });
             }
             SheenEvent::Fullscreen(on) => {
                 self.fullscreen = on;
@@ -113,17 +135,31 @@ impl Island {
                 self.hovering = on;
                 if on {
                     self.collapse_at = None;
-                } else if self.expanded {
+                } else if self.panel != Panel::None {
                     self.collapse_at = Some(now + self.config.collapse_delay);
                 }
             }
             SheenEvent::ExpandRequested => {
                 if self.media.is_some() && !self.fullscreen {
-                    self.expanded = true;
-                    self.collapse_at = None;
+                    self.open(Panel::Media);
+                }
+            }
+            SheenEvent::ShelfRequested => {
+                if !self.fullscreen {
+                    self.open(Panel::Shelf);
                 }
             }
             SheenEvent::CollapseRequested => self.collapse(),
+            SheenEvent::Transfers(samples) => self.transfers.update(samples, now),
+            SheenEvent::FileDrag(on) => {
+                // A drag that ends over the island was a drop onto the shelf:
+                // keep it open so the user sees what landed.
+                if !on && self.file_drag && self.hovering {
+                    self.open(Panel::Shelf);
+                }
+                self.file_drag = on;
+            }
+            SheenEvent::Shelf(items) => self.shelf = items,
         }
         self.expire(now);
         self.present() != before
@@ -133,28 +169,33 @@ impl Island {
     pub fn tick(&mut self, now: Instant) -> bool {
         let before = self.present();
         self.expire(now);
+        self.transfers.tick(now);
         self.present() != before
     }
 
     /// The next instant at which [`Island::tick`] would change something.
     pub fn next_deadline(&self) -> Option<Instant> {
-        let osd = self.osd.as_ref().map(|o| o.until);
-        match (osd, self.collapse_at) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        [self.osd.as_ref().map(|o| o.until), self.collapse_at, self.transfers.next_deadline()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     pub fn present(&self) -> Presentation {
         let osd = self.osd.as_ref().map(|o| o.kind.clone());
+        let transfers = self.transfers.visible();
         let mode = if self.fullscreen {
             Mode::Hidden
-        } else if self.expanded && self.media.is_some() {
+        } else if self.file_drag || self.panel == Panel::Shelf {
+            Mode::Shelf
+        } else if self.panel == Panel::Media && self.media.is_some() {
             Mode::Expanded
         } else if osd.is_some() {
             Mode::Osd
         } else if self.media.is_some() {
             Mode::MediaCompact
+        } else if !transfers.is_empty() {
+            Mode::Transfer
         } else if self.config.show_idle_pill {
             Mode::Idle
         } else {
@@ -163,24 +204,40 @@ impl Island {
 
         let geometry = match mode {
             Mode::Hidden => Geometry::HIDDEN,
+            Mode::Idle if !self.shelf.is_empty() => Geometry::IDLE_SHELF,
             Mode::Idle => Geometry::IDLE,
             Mode::MediaCompact if self.hovering => Geometry::MEDIA_PEEK,
             Mode::MediaCompact => Geometry::MEDIA_COMPACT,
+            Mode::Transfer if self.hovering => Geometry::TRANSFER_PEEK,
+            Mode::Transfer => Geometry::TRANSFER,
+            Mode::Osd if matches!(osd, Some(OsdKind::Clipboard { .. })) => Geometry::OSD_TALL,
             Mode::Osd => Geometry::OSD,
             Mode::Expanded => Geometry::EXPANDED,
+            Mode::Shelf => Geometry::SHELF,
         };
 
+        let hidden = mode == Mode::Hidden;
         Presentation {
             mode,
             geometry,
-            hovering: self.hovering && mode != Mode::Hidden,
+            hovering: self.hovering && !hidden,
             media: self.media.clone(),
-            osd: if mode == Mode::Hidden { None } else { osd },
+            osd: if hidden { None } else { osd },
+            transfers: if hidden { Vec::new() } else { transfers },
+            shelf: self.shelf.clone(),
+            dragging: self.file_drag && !hidden,
         }
     }
 
+    fn open(&mut self, panel: Panel) {
+        self.panel = panel;
+        // Opened without the pointer on it (e.g. a drop that just ended
+        // elsewhere): close again unless the user comes over.
+        self.collapse_at = None;
+    }
+
     fn collapse(&mut self) {
-        self.expanded = false;
+        self.panel = Panel::None;
         self.collapse_at = None;
     }
 
@@ -218,10 +275,7 @@ mod tests {
     }
 
     fn volume(level: f32) -> SheenEvent {
-        SheenEvent::Osd(OsdKind::Volume {
-            level,
-            muted: false,
-        })
+        SheenEvent::Osd(OsdKind::Volume { level, muted: false })
     }
 
     fn ms(n: u64) -> Duration {
@@ -240,10 +294,7 @@ mod tests {
 
     #[test]
     fn idle_pill_can_be_disabled() {
-        let island = Island::new(IslandConfig {
-            show_idle_pill: false,
-            ..Default::default()
-        });
+        let island = Island::new(IslandConfig { show_idle_pill: false, ..Default::default() });
         assert_eq!(island.present().mode, Mode::Hidden);
     }
 
@@ -346,6 +397,124 @@ mod tests {
         island.handle(SheenEvent::Media(Some(song())), t);
         island.handle(SheenEvent::Hover(true), t);
         assert_eq!(island.present().geometry, Geometry::MEDIA_PEEK);
+    }
+
+    fn download(id: u64, done: u64, in_view: bool) -> crate::TransferSample {
+        crate::TransferSample {
+            id,
+            kind: crate::TransferKind::Download,
+            app: "Chrome".into(),
+            name: "big.iso".into(),
+            done,
+            total: Some(1000),
+            unit: crate::TransferUnit::Bytes,
+            source_in_view: in_view,
+        }
+    }
+
+    fn item(id: u64) -> ShelfItem {
+        ShelfItem {
+            id,
+            path: format!("C:/f{id}.txt"),
+            name: format!("f{id}.txt"),
+            kind: "file".into(),
+            ext: "txt".into(),
+            size: Some(1),
+        }
+    }
+
+    #[test]
+    fn background_transfer_shows_and_peeks() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::Transfers(vec![download(1, 100, true)]), t);
+        assert_eq!(island.present().mode, Mode::Idle, "source in view: stay quiet");
+
+        island.handle(SheenEvent::Transfers(vec![download(1, 200, false)]), t + ms(1000));
+        let p = island.present();
+        assert_eq!(p.mode, Mode::Transfer);
+        assert_eq!(p.transfers.len(), 1);
+        assert_eq!(p.geometry, Geometry::TRANSFER);
+
+        island.handle(SheenEvent::Hover(true), t + ms(1100));
+        assert_eq!(island.present().geometry, Geometry::TRANSFER_PEEK);
+    }
+
+    #[test]
+    fn media_wins_over_transfers_but_carries_them() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::Media(Some(song())), t);
+        island.handle(SheenEvent::Transfers(vec![download(1, 100, false)]), t);
+        let p = island.present();
+        assert_eq!(p.mode, Mode::MediaCompact);
+        assert_eq!(p.transfers.len(), 1);
+    }
+
+    #[test]
+    fn finished_transfer_flashes_then_clears() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::Transfers(vec![download(1, 990, false)]), t);
+        island.handle(SheenEvent::Transfers(vec![]), t + ms(1000));
+        assert_eq!(island.present().transfers[0].state, crate::TransferState::Done);
+        let deadline = island.next_deadline().unwrap();
+        assert!(island.tick(deadline));
+        assert_eq!(island.present().mode, Mode::Idle);
+    }
+
+    #[test]
+    fn file_drag_turns_island_into_drop_target() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::Media(Some(song())), t);
+        island.handle(SheenEvent::FileDrag(true), t);
+        let p = island.present();
+        assert_eq!(p.mode, Mode::Shelf);
+        assert!(p.dragging);
+
+        // Drag ends elsewhere: back to media.
+        island.handle(SheenEvent::FileDrag(false), t + ms(500));
+        assert_eq!(island.present().mode, Mode::MediaCompact);
+    }
+
+    #[test]
+    fn drop_onto_island_keeps_shelf_open_until_pointer_leaves() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::FileDrag(true), t);
+        island.handle(SheenEvent::Hover(true), t);
+        island.handle(SheenEvent::Shelf(vec![item(1)]), t);
+        island.handle(SheenEvent::FileDrag(false), t);
+        assert_eq!(island.present().mode, Mode::Shelf);
+        assert!(!island.present().dragging);
+
+        island.handle(SheenEvent::Hover(false), t + ms(100));
+        assert!(island.tick(t + ms(900)));
+        let p = island.present();
+        assert_eq!(p.mode, Mode::Idle);
+        assert_eq!(p.geometry, Geometry::IDLE_SHELF, "badge shows parked files");
+    }
+
+    #[test]
+    fn shelf_can_be_opened_and_closed() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(SheenEvent::ShelfRequested, t);
+        assert_eq!(island.present().mode, Mode::Shelf);
+        island.handle(SheenEvent::CollapseRequested, t);
+        assert_eq!(island.present().mode, Mode::Idle);
+    }
+
+    #[test]
+    fn clipboard_peek_uses_tall_osd() {
+        let t = Instant::now();
+        let mut island = Island::default();
+        island.handle(
+            SheenEvent::Osd(OsdKind::Clipboard { text: Some("hi".into()), image: None, files: 0 }),
+            t,
+        );
+        assert_eq!(island.present().geometry, Geometry::OSD_TALL);
     }
 
     #[test]

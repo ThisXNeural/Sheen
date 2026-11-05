@@ -93,9 +93,7 @@ fn bind(enumerator: &IMMDeviceEnumerator, out: &Sender<Signal>) -> Option<Endpoi
         unsafe { volume.RegisterControlChangeNotify(&callback)? };
         Ok(Endpoint { volume, callback })
     })();
-    result
-        .map_err(|e| log::warn!("no default audio endpoint: {e}"))
-        .ok()
+    result.map_err(|e| log::warn!("no default audio endpoint: {e}")).ok()
 }
 
 fn adjust(volume: &IAudioEndpointVolume, delta: f32) -> Result<()> {
@@ -114,10 +112,7 @@ struct VolumeWatcher(Sender<Signal>);
 impl IAudioEndpointVolumeCallback_Impl for VolumeWatcher_Impl {
     fn OnNotify(&self, data: *mut AUDIO_VOLUME_NOTIFICATION_DATA) -> Result<()> {
         if let Some(data) = unsafe { data.as_ref() } {
-            let osd = OsdKind::Volume {
-                level: data.fMasterVolume,
-                muted: data.bMuted.as_bool(),
-            };
+            let osd = OsdKind::Volume { level: data.fMasterVolume, muted: data.bMuted.as_bool() };
             let _ = self.0.send(Signal::Event(SheenEvent::Osd(osd)));
         }
         Ok(())

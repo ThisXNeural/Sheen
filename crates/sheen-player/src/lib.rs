@@ -9,11 +9,14 @@
 //! releases it after a short idle period, so a paused Sheen costs no audio
 //! thread wake-ups and does not keep the sound card awake.
 
+pub mod art;
+pub mod collections;
 pub mod library;
 pub mod queue;
 
 mod engine;
 mod player;
 
+pub use collections::{Collections, Playlist};
 pub use library::{Library, Track};
-pub use player::{Player, PlayerCommand, PlayerState, Repeat};
+pub use player::{Player, PlayerCommand, PlayerState, QueueSnapshot, Repeat};

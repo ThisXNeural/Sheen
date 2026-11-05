@@ -1,0 +1,15 @@
+@import "../shared/tokens.css";
+
+/* The window is transparent; the card draws itself with room for a shadow. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  color: var(--fg);
+}
+
+#app {
+  height: 100%;
+}

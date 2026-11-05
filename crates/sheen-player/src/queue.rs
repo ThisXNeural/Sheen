@@ -16,12 +16,7 @@ pub struct Queue {
 
 impl Queue {
     pub fn new(tracks: Vec<Track>, start: usize, shuffle: bool) -> Self {
-        let mut q = Queue {
-            order: (0..tracks.len()).collect(),
-            tracks,
-            cursor: 0,
-            shuffle: false,
-        };
+        let mut q = Queue { order: (0..tracks.len()).collect(), tracks, cursor: 0, shuffle: false };
         q.cursor = start.min(q.tracks.len().saturating_sub(1));
         q.set_shuffle(shuffle);
         q
@@ -84,6 +79,64 @@ impl Queue {
         }
     }
 
+    /// Insert tracks to play right after the current one.
+    pub fn insert_next(&mut self, tracks: Vec<Track>) {
+        let at = if self.tracks.is_empty() { 0 } else { self.cursor + 1 };
+        let start = self.tracks.len();
+        let n = tracks.len();
+        self.tracks.extend(tracks);
+        self.order.splice(at..at, start..start + n);
+    }
+
+    /// Add tracks to the end of the queue.
+    pub fn append(&mut self, tracks: Vec<Track>) {
+        let start = self.tracks.len();
+        self.order.extend(start..start + tracks.len());
+        self.tracks.extend(tracks);
+    }
+
+    /// Make the entry at play-order position `pos` current.
+    pub fn jump(&mut self, pos: usize) -> bool {
+        if pos < self.order.len() {
+            self.cursor = pos;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove the entry at play-order position `pos`. The current track
+    /// cannot be removed (skip it instead).
+    pub fn remove(&mut self, pos: usize) -> bool {
+        if pos >= self.order.len() || pos == self.cursor {
+            return false;
+        }
+        let idx = self.order.remove(pos);
+        self.tracks.remove(idx);
+        for i in &mut self.order {
+            if *i > idx {
+                *i -= 1;
+            }
+        }
+        if pos < self.cursor {
+            self.cursor -= 1;
+        }
+        true
+    }
+
+    /// Tracks in play order and the current position.
+    pub fn snapshot(&self) -> (Vec<Track>, usize) {
+        (self.order.iter().map(|&i| self.tracks[i].clone()).collect(), self.cursor)
+    }
+
+    /// Rebuild a saved queue in its saved play order.
+    pub fn restore(tracks: Vec<Track>, cursor: usize, shuffle: bool) -> Self {
+        let mut q = Queue::new(tracks, cursor, false);
+        // The saved order *is* the play order; just remember the flag.
+        q.shuffle = shuffle;
+        q
+    }
+
     pub fn back(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
@@ -105,7 +158,12 @@ mod tests {
                 title: id.to_string(),
                 artist: String::new(),
                 album: String::new(),
+                album_artist: String::new(),
+                track_no: None,
+                disc_no: None,
+                year: None,
                 duration_ms: 1000,
+                art: String::new(),
                 mtime: 0,
             })
             .collect()
@@ -163,6 +221,54 @@ mod tests {
         let current = id(&q);
         q.advance(Repeat::Off, true);
         assert_eq!(id(&q), current + 1);
+    }
+
+    #[test]
+    fn play_next_and_append() {
+        let mut q = Queue::new(tracks(3), 0, false);
+        q.insert_next(vec![tracks(10).remove(9)]);
+        q.append(vec![tracks(9).remove(8)]);
+        let (list, cur) = q.snapshot();
+        assert_eq!(list.iter().map(|t| t.id).collect::<Vec<_>>(), vec![0, 9, 1, 2, 8]);
+        assert_eq!(cur, 0);
+        q.advance(Repeat::Off, true);
+        assert_eq!(id(&q), 9);
+    }
+
+    #[test]
+    fn enqueue_into_empty_queue_becomes_current() {
+        let mut q = Queue::default();
+        q.insert_next(tracks(2));
+        assert_eq!(id(&q), 0);
+    }
+
+    #[test]
+    fn remove_keeps_current_and_indices_consistent() {
+        let mut q = Queue::new(tracks(5), 2, false);
+        assert!(!q.remove(2), "current track stays");
+        assert!(q.remove(0));
+        assert_eq!(id(&q), 2);
+        assert!(q.remove(3)); // was id 4
+        let (list, cur) = q.snapshot();
+        assert_eq!(list.iter().map(|t| t.id).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(cur, 1);
+        // Shuffle toggling still sees exactly the remaining tracks.
+        q.set_shuffle(true);
+        q.set_shuffle(false);
+        assert_eq!(q.len(), 3);
+        assert_eq!(id(&q), 2);
+    }
+
+    #[test]
+    fn jump_and_restore() {
+        let mut q = Queue::new(tracks(4), 0, false);
+        assert!(q.jump(3));
+        assert_eq!(id(&q), 3);
+        assert!(!q.jump(9));
+        let (list, cur) = q.snapshot();
+        let r = Queue::restore(list, cur, true);
+        assert!(r.shuffle());
+        assert_eq!(r.current().unwrap().id, 3);
     }
 
     #[test]

@@ -65,3 +65,36 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* Pill buttons used in view headers. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg-active);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pill:hover:not(:disabled) {
+  background: var(--track);
+}
+.pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pill.accent {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.pill.accent:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+.pill.icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}

@@ -70,10 +70,7 @@ unsafe fn foreground_covers_primary_monitor() -> bool {
     if MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != primary {
         return false;
     }
-    let mut info = MONITORINFO {
-        cbSize: size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
+    let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
     let mut rect = RECT::default();
     if !GetMonitorInfoW(primary, &mut info).as_bool() || GetWindowRect(fg, &mut rect).is_err() {
         return false;
@@ -86,8 +83,5 @@ unsafe fn is_desktop_or_shell(hwnd: HWND) -> bool {
     let mut buf = [0u16; 64];
     let len = GetClassNameW(hwnd, &mut buf) as usize;
     let class = String::from_utf16_lossy(&buf[..len]);
-    matches!(
-        class.as_str(),
-        "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
-    )
+    matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
 }

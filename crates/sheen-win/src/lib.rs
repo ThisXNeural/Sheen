@@ -7,7 +7,8 @@
 //! On non-Windows targets the services are inert stubs so the workspace (and
 //! `sheen-core`'s tests) still build everywhere.
 
-use sheen_core::{MediaCommand, SheenEvent};
+use sheen_core::{Accelerator, MediaCommand, SheenEvent};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 /// Output of the platform layer.
@@ -82,13 +83,13 @@ pub struct Services {
 }
 
 impl Services {
-    /// Start media (SMTC), audio (Core Audio) and full-screen watchers.
+    /// Start media (SMTC), audio (Core Audio), full-screen, transfer and
+    /// clipboard watchers.
     pub fn start(tx: Sender<Signal>) -> Self {
         imp::spawn_fullscreen_watcher(tx.clone());
-        Self {
-            media: imp::MediaHandle::spawn(tx.clone()),
-            audio: imp::AudioHandle::spawn(tx),
-        }
+        imp::spawn_transfer_watcher(tx.clone());
+        imp::spawn_clipboard_listener(tx.clone());
+        Self { media: imp::MediaHandle::spawn(tx.clone()), audio: imp::AudioHandle::spawn(tx) }
     }
 
     pub fn media_command(&self, command: MediaCommand) {
@@ -108,4 +109,53 @@ impl Services {
 /// this crate does not have to share a `windows` crate version with Tauri.
 pub fn apply_island_window_style(hwnd: isize) -> anyhow::Result<()> {
     imp::apply_island_window_style(hwnd)
+}
+
+/// What a drop target did with files dragged out of the shelf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropOutcome {
+    Cancelled,
+    Copied,
+    Moved,
+    Linked,
+}
+
+/// A file drag is in progress anywhere on the desktop.
+pub fn file_drag_active() -> bool {
+    imp::file_drag_active()
+}
+
+/// Drag files out to another app. Call on the UI thread while the mouse
+/// button is held; returns when the drop is done.
+pub fn drag_files_out(paths: &[PathBuf]) -> DropOutcome {
+    imp::drag_files_out(paths).unwrap_or_else(|e| {
+        log::warn!("drag out failed: {e:?}");
+        DropOutcome::Cancelled
+    })
+}
+
+/// Show a file selected in Explorer.
+pub fn reveal_in_explorer(path: &Path) {
+    imp::reveal(path)
+}
+
+/// Open a file or folder with its default app.
+pub fn open_path(path: &Path) {
+    imp::open(path)
+}
+
+/// System-wide keyboard shortcuts.
+pub struct Hotkeys(imp::HotkeyHandle);
+
+impl Hotkeys {
+    /// `on_press` receives the id the shortcut was registered with.
+    pub fn start(on_press: impl Fn(i32) + Send + 'static) -> Self {
+        Self(imp::HotkeyHandle::spawn(Box::new(on_press)))
+    }
+
+    /// Register (or with `None`, remove) the shortcut for `id`. Fails if
+    /// another app already owns the combination.
+    pub fn set(&self, id: i32, accelerator: Option<Accelerator>) -> Result<(), String> {
+        self.0.set(id, accelerator)
+    }
 }

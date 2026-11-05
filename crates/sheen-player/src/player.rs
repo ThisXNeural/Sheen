@@ -22,11 +22,7 @@ pub enum Repeat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PlayerCommand {
     /// Replace the queue and start playing `tracks[start]`.
     PlayQueue {
@@ -50,6 +46,40 @@ pub enum PlayerCommand {
     SetRepeat {
         repeat: Repeat,
     },
+    /// Add tracks after the current one (`next`) or at the end of the queue.
+    Enqueue {
+        tracks: Vec<Track>,
+        next: bool,
+    },
+    /// Play the entry at a play-order position.
+    JumpTo {
+        index: usize,
+    },
+    /// Remove the entry at a play-order position (not the current one).
+    RemoveAt {
+        index: usize,
+    },
+    /// Restore a saved session, paused.
+    Restore {
+        tracks: Vec<Track>,
+        index: usize,
+        position_ms: u64,
+        shuffle: bool,
+        repeat: Repeat,
+    },
+}
+
+/// The queue in play order, for the "Up next" panel and session saving.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueSnapshot {
+    pub tracks: Vec<Track>,
+    pub index: usize,
+}
+
+enum Msg {
+    Command(PlayerCommand),
+    Snapshot(Sender<QueueSnapshot>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -64,11 +94,13 @@ pub struct PlayerState {
     pub shuffle: bool,
     pub repeat: Repeat,
     pub queue_len: usize,
+    /// Bumped whenever the queue's contents or order change.
+    pub queue_rev: u64,
 }
 
 /// Handle to the player thread.
 #[derive(Clone)]
-pub struct Player(Sender<PlayerCommand>);
+pub struct Player(Sender<Msg>);
 
 impl Player {
     /// Start the player thread. `on_change` runs on that thread whenever the
@@ -83,9 +115,14 @@ impl Player {
                 loop {
                     let timeout = core.timeout();
                     let changed = match rx.recv_timeout(timeout) {
-                        Ok(cmd) => {
+                        Ok(Msg::Command(cmd)) => {
                             core.handle(cmd);
                             true
+                        }
+                        Ok(Msg::Snapshot(reply)) => {
+                            let (tracks, index) = core.queue.snapshot();
+                            let _ = reply.send(QueueSnapshot { tracks, index });
+                            false
                         }
                         Err(RecvTimeoutError::Timeout) => core.tick(),
                         Err(RecvTimeoutError::Disconnected) => return,
@@ -100,7 +137,14 @@ impl Player {
     }
 
     pub fn send(&self, command: PlayerCommand) {
-        let _ = self.0.send(command);
+        let _ = self.0.send(Msg::Command(command));
+    }
+
+    /// The current queue, in play order.
+    pub fn queue(&self) -> QueueSnapshot {
+        let (tx, rx) = channel();
+        let _ = self.0.send(Msg::Snapshot(tx));
+        rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default()
     }
 }
 
@@ -115,6 +159,7 @@ struct Core {
     /// Position to resume from once the engine has been released.
     resume_at: Duration,
     paused_since: Option<Instant>,
+    queue_rev: u64,
 }
 
 impl Core {
@@ -129,6 +174,7 @@ impl Core {
             loaded: false,
             resume_at: Duration::ZERO,
             paused_since: None,
+            queue_rev: 0,
         }
     }
 
@@ -146,7 +192,37 @@ impl Core {
         match cmd {
             PlayerCommand::PlayQueue { tracks, start } => {
                 self.queue = Queue::new(tracks, start, self.queue.shuffle());
+                self.queue_rev += 1;
                 self.start_current(Duration::ZERO);
+            }
+            PlayerCommand::Enqueue { tracks, next } => {
+                let was_empty = self.queue.is_empty();
+                if next {
+                    self.queue.insert_next(tracks);
+                } else {
+                    self.queue.append(tracks);
+                }
+                self.queue_rev += 1;
+                if was_empty {
+                    // Nothing was loaded; the new first track becomes current.
+                    self.unload(Duration::ZERO);
+                }
+            }
+            PlayerCommand::JumpTo { index } => {
+                if self.queue.jump(index) {
+                    self.start_current(Duration::ZERO);
+                }
+            }
+            PlayerCommand::RemoveAt { index } => {
+                if self.queue.remove(index) {
+                    self.queue_rev += 1;
+                }
+            }
+            PlayerCommand::Restore { tracks, index, position_ms, shuffle, repeat } => {
+                self.queue = Queue::restore(tracks, index, shuffle);
+                self.repeat = repeat;
+                self.queue_rev += 1;
+                self.unload(Duration::from_millis(position_ms));
             }
             PlayerCommand::TogglePlay if self.playing => self.pause(),
             PlayerCommand::TogglePlay | PlayerCommand::Play => self.play(),
@@ -169,7 +245,10 @@ impl Core {
                 self.volume = volume.clamp(0.0, 1.0);
                 self.engine.set_volume(self.volume);
             }
-            PlayerCommand::SetShuffle { on } => self.queue.set_shuffle(on),
+            PlayerCommand::SetShuffle { on } => {
+                self.queue.set_shuffle(on);
+                self.queue_rev += 1;
+            }
             PlayerCommand::SetRepeat { repeat } => self.repeat = repeat,
         }
     }
@@ -186,9 +265,7 @@ impl Core {
         }
         if !self.playing
             && self.loaded
-            && self
-                .paused_since
-                .is_some_and(|t| t.elapsed() >= IDLE_RELEASE)
+            && self.paused_since.is_some_and(|t| t.elapsed() >= IDLE_RELEASE)
         {
             self.resume_at = self.engine.position();
             self.engine.release();
@@ -243,6 +320,15 @@ impl Core {
         }
     }
 
+    /// Forget the loaded track; `play` will load the current one at `resume`.
+    fn unload(&mut self, resume: Duration) {
+        self.engine.release();
+        self.playing = false;
+        self.loaded = false;
+        self.resume_at = resume;
+        self.paused_since = None;
+    }
+
     fn stop(&mut self) {
         self.engine.release();
         self.playing = false;
@@ -281,6 +367,7 @@ impl Core {
             shuffle: self.queue.shuffle(),
             repeat: self.repeat,
             queue_len: self.queue.len(),
+            queue_rev: self.queue_rev,
         }
     }
 }
@@ -297,7 +384,12 @@ mod tests {
                 title: id.to_string(),
                 artist: String::new(),
                 album: String::new(),
+                album_artist: String::new(),
+                track_no: None,
+                disc_no: None,
+                year: None,
                 duration_ms: 10_000,
+                art: String::new(),
                 mtime: 0,
             })
             .collect()
@@ -310,10 +402,7 @@ mod tests {
     #[test]
     fn play_queue_starts_requested_track() {
         let mut c = core();
-        c.handle(PlayerCommand::PlayQueue {
-            tracks: tracks(3),
-            start: 2,
-        });
+        c.handle(PlayerCommand::PlayQueue { tracks: tracks(3), start: 2 });
         let s = c.state();
         assert!(s.playing);
         assert_eq!(s.track.unwrap().id, 2);
@@ -323,10 +412,7 @@ mod tests {
     #[test]
     fn toggle_pauses_and_resumes() {
         let mut c = core();
-        c.handle(PlayerCommand::PlayQueue {
-            tracks: tracks(1),
-            start: 0,
-        });
+        c.handle(PlayerCommand::PlayQueue { tracks: tracks(1), start: 0 });
         c.handle(PlayerCommand::TogglePlay);
         assert!(!c.state().playing);
         assert!(c.timeout() <= IDLE_RELEASE);
@@ -337,10 +423,7 @@ mod tests {
     #[test]
     fn previous_restarts_when_past_threshold() {
         let mut c = core();
-        c.handle(PlayerCommand::PlayQueue {
-            tracks: tracks(3),
-            start: 1,
-        });
+        c.handle(PlayerCommand::PlayQueue { tracks: tracks(3), start: 1 });
         c.handle(PlayerCommand::Seek { position_ms: 5_000 });
         c.handle(PlayerCommand::Previous);
         let s = c.state();
@@ -354,16 +437,53 @@ mod tests {
     #[test]
     fn seek_while_released_is_kept_for_resume() {
         let mut c = core();
-        c.handle(PlayerCommand::PlayQueue {
-            tracks: tracks(1),
-            start: 0,
-        });
+        c.handle(PlayerCommand::PlayQueue { tracks: tracks(1), start: 0 });
         c.handle(PlayerCommand::Pause);
         c.stop();
         c.handle(PlayerCommand::Seek { position_ms: 4_000 });
         assert_eq!(c.state().position_ms, 4_000);
         c.handle(PlayerCommand::Play);
         assert!(c.state().position_ms >= 4_000);
+    }
+
+    #[test]
+    fn restore_is_paused_at_saved_position() {
+        let mut c = core();
+        c.handle(PlayerCommand::Restore {
+            tracks: tracks(3),
+            index: 1,
+            position_ms: 42_000,
+            shuffle: false,
+            repeat: Repeat::All,
+        });
+        let s = c.state();
+        assert!(!s.playing);
+        assert_eq!(s.track.unwrap().id, 1);
+        assert_eq!(s.position_ms, 42_000);
+        assert_eq!(s.repeat, Repeat::All);
+        c.handle(PlayerCommand::Play);
+        assert!(c.state().position_ms >= 42_000);
+    }
+
+    #[test]
+    fn queue_edits_bump_revision() {
+        let mut c = core();
+        c.handle(PlayerCommand::PlayQueue { tracks: tracks(2), start: 0 });
+        let rev = c.state().queue_rev;
+        c.handle(PlayerCommand::Enqueue { tracks: tracks(1), next: true });
+        c.handle(PlayerCommand::RemoveAt { index: 1 });
+        assert_eq!(c.state().queue_rev, rev + 2);
+        c.handle(PlayerCommand::JumpTo { index: 1 });
+        assert_eq!(c.state().track.unwrap().id, 1);
+    }
+
+    #[test]
+    fn enqueue_into_empty_player_does_not_autoplay() {
+        let mut c = core();
+        c.handle(PlayerCommand::Enqueue { tracks: tracks(2), next: false });
+        let s = c.state();
+        assert!(!s.playing);
+        assert_eq!(s.track.unwrap().id, 0);
     }
 
     #[test]
@@ -380,11 +500,6 @@ mod tests {
         assert!(matches!(cmd, PlayerCommand::Seek { position_ms: 1200 }));
         let cmd: PlayerCommand =
             serde_json::from_str(r#"{"type":"setRepeat","repeat":"all"}"#).unwrap();
-        assert!(matches!(
-            cmd,
-            PlayerCommand::SetRepeat {
-                repeat: Repeat::All
-            }
-        ));
+        assert!(matches!(cmd, PlayerCommand::SetRepeat { repeat: Repeat::All }));
     }
 }

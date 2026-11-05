@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Both windows only listen to events from the Rust side; Sheen's own commands are allowed by default.",
-  "windows": ["island", "main"],
-  "permissions": ["core:event:default"]
+  "description": "All windows only listen to events from the Rust side; Sheen's own commands are allowed by default.",
+  "windows": [
+    "island",
+    "main",
+    "note"
+  ],
+  "permissions": [
+    "core:event:default"
+  ]
 }

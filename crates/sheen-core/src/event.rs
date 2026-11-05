@@ -16,8 +16,61 @@ pub enum SheenEvent {
     Hover(bool),
     /// The user asked to open the expanded card (click on the compact capsule).
     ExpandRequested,
-    /// The user asked to close the expanded card.
+    /// The user asked to close the expanded card or the shelf.
     CollapseRequested,
+    /// Every transfer the platform currently sees (full snapshot).
+    Transfers(Vec<TransferSample>),
+    /// A file drag is in progress somewhere on the desktop.
+    FileDrag(bool),
+    /// The shelf's contents changed.
+    Shelf(Vec<ShelfItem>),
+    /// Open the shelf panel.
+    ShelfRequested,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TransferKind {
+    Download,
+    Copy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferUnit {
+    Bytes,
+    /// A progress bar's position, without a known byte count.
+    Ratio,
+}
+
+/// One observation of a transfer by a platform provider.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransferSample {
+    /// Stable for the lifetime of the transfer.
+    pub id: u64,
+    pub kind: TransferKind,
+    /// Source app, e.g. "Chrome", "File Explorer", "IDM".
+    pub app: String,
+    /// File name or a short description.
+    pub name: String,
+    pub done: u64,
+    pub total: Option<u64>,
+    pub unit: TransferUnit,
+    /// The source window is in front of the user, so the island stays quiet.
+    pub source_in_view: bool,
+}
+
+/// A file parked on the shelf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfItem {
+    pub id: u64,
+    pub path: String,
+    pub name: String,
+    /// "image", "folder" or "file".
+    pub kind: String,
+    /// Lower-case extension without the dot.
+    pub ext: String,
+    pub size: Option<u64>,
 }
 
 /// Snapshot of the current media session, as exposed by Windows SMTC.
@@ -44,11 +97,7 @@ pub struct MediaInfo {
 
 /// Transient notifications that replace the stock Windows flyouts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum OsdKind {
     /// `level` is 0.0..=1.0.
     Volume {
@@ -69,15 +118,17 @@ pub enum OsdKind {
         name: String,
         percent: u8,
     },
+    /// Something was copied. `image` is a small `data:` thumbnail.
+    Clipboard {
+        text: Option<String>,
+        image: Option<String>,
+        files: u32,
+    },
 }
 
 /// Commands the UI can send back to the media session.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum MediaCommand {
     TogglePlayPause,
     Next,

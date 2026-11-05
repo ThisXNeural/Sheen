@@ -18,7 +18,7 @@ export default defineConfig({
     // Two entry points: the always-on island stays tiny; the library window's
     // code is only loaded when that window is opened.
     rollupOptions: {
-      input: { island: "ui/index.html", main: "ui/main.html" },
+      input: { island: "ui/index.html", main: "ui/main.html", note: "ui/note.html" },
     },
   },
 });

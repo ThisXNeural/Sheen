@@ -97,10 +97,7 @@ fn run(out: Sender<Signal>, me: Sender<Msg>, inbox: Receiver<Msg>) -> windows::c
     while let Ok(msg) = inbox.recv() {
         let session = match msg {
             Msg::Rebind => {
-                bound = manager
-                    .GetCurrentSession()
-                    .ok()
-                    .and_then(|s| bind(s, &me).ok());
+                bound = manager.GetCurrentSession().ok().and_then(|s| bind(s, &me).ok());
                 bound.as_ref().map(|b| b.session.clone())
             }
             _ => bound.as_ref().map(|b| b.session.clone()),
@@ -160,10 +157,7 @@ fn bind(session: Session, me: &Sender<Msg>) -> windows::core::Result<Bound> {
         let _ = tx.send(Msg::Playback);
         Ok(())
     }))?;
-    Ok(Bound {
-        session,
-        tokens: [props, playback, timeline],
-    })
+    Ok(Bound { session, tokens: [props, playback, timeline] })
 }
 
 fn read_info(session: &Session) -> windows::core::Result<MediaInfo> {
@@ -174,10 +168,7 @@ fn read_info(session: &Session) -> windows::core::Result<MediaInfo> {
     let ticks_to_ms = |t: i64| (t.max(0) / 10_000) as u64;
     let duration = timeline.EndTime()?.Duration - timeline.StartTime()?.Duration;
     let (position_ms, duration_ms) = if duration > 0 {
-        (
-            Some(ticks_to_ms(timeline.Position()?.Duration)),
-            Some(ticks_to_ms(duration)),
-        )
+        (Some(ticks_to_ms(timeline.Position()?.Duration)), Some(ticks_to_ms(duration)))
     } else {
         (None, None)
     };
@@ -207,22 +198,13 @@ fn read_artwork(session: &Session) -> windows::core::Result<Option<String>> {
         return Ok(None);
     }
     let buffer = Buffer::Create(size as u32)?;
-    let filled = stream
-        .ReadAsync(&buffer, size as u32, InputStreamOptions::None)?
-        .join()?;
+    let filled = stream.ReadAsync(&buffer, size as u32, InputStreamOptions::None)?.join()?;
     let reader = DataReader::FromBuffer(&filled)?;
     let mut bytes = vec![0u8; filled.Length()? as usize];
     reader.ReadBytes(&mut bytes)?;
 
-    let mime = stream
-        .ContentType()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-    let mime = if mime.starts_with("image/") {
-        mime
-    } else {
-        "image/png".into()
-    };
+    let mime = stream.ContentType().map(|s| s.to_string()).unwrap_or_default();
+    let mime = if mime.starts_with("image/") { mime } else { "image/png".into() };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(Some(format!("data:{mime};base64,{b64}")))
 }
@@ -232,9 +214,9 @@ fn execute(session: &Session, command: MediaCommand) -> windows::core::Result<()
         MediaCommand::TogglePlayPause => session.TryTogglePlayPauseAsync()?.join()?,
         MediaCommand::Next => session.TrySkipNextAsync()?.join()?,
         MediaCommand::Previous => session.TrySkipPreviousAsync()?.join()?,
-        MediaCommand::Seek { position_ms } => session
-            .TryChangePlaybackPositionAsync(position_ms as i64 * 10_000)?
-            .join()?,
+        MediaCommand::Seek { position_ms } => {
+            session.TryChangePlaybackPositionAsync(position_ms as i64 * 10_000)?.join()?
+        }
     };
     if !accepted {
         log::debug!("source app declined {command:?}");

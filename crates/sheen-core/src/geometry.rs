@@ -25,36 +25,19 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    pub const HIDDEN: Geometry = Geometry {
-        width: 0.0,
-        height: 0.0,
-        radius: 0.0,
-    };
-    pub const IDLE: Geometry = Geometry {
-        width: 120.0,
-        height: 30.0,
-        radius: 15.0,
-    };
-    pub const MEDIA_COMPACT: Geometry = Geometry {
-        width: 230.0,
-        height: 36.0,
-        radius: 18.0,
-    };
-    pub const MEDIA_PEEK: Geometry = Geometry {
-        width: 246.0,
-        height: 40.0,
-        radius: 20.0,
-    };
-    pub const OSD: Geometry = Geometry {
-        width: 300.0,
-        height: 44.0,
-        radius: 22.0,
-    };
-    pub const EXPANDED: Geometry = Geometry {
-        width: 400.0,
-        height: 156.0,
-        radius: 34.0,
-    };
+    pub const HIDDEN: Geometry = Geometry { width: 0.0, height: 0.0, radius: 0.0 };
+    pub const IDLE: Geometry = Geometry { width: 120.0, height: 30.0, radius: 15.0 };
+    /// Idle pill with a shelf badge.
+    pub const IDLE_SHELF: Geometry = Geometry { width: 150.0, height: 30.0, radius: 15.0 };
+    pub const MEDIA_COMPACT: Geometry = Geometry { width: 230.0, height: 36.0, radius: 18.0 };
+    pub const MEDIA_PEEK: Geometry = Geometry { width: 246.0, height: 40.0, radius: 20.0 };
+    pub const OSD: Geometry = Geometry { width: 300.0, height: 44.0, radius: 22.0 };
+    /// Clipboard peek: room for two lines of text or a thumbnail.
+    pub const OSD_TALL: Geometry = Geometry { width: 320.0, height: 64.0, radius: 26.0 };
+    pub const TRANSFER: Geometry = Geometry { width: 250.0, height: 36.0, radius: 18.0 };
+    pub const TRANSFER_PEEK: Geometry = Geometry { width: 340.0, height: 74.0, radius: 26.0 };
+    pub const SHELF: Geometry = Geometry { width: 420.0, height: 132.0, radius: 30.0 };
+    pub const EXPANDED: Geometry = Geometry { width: 400.0, height: 156.0, radius: 34.0 };
 
     /// The capsule's rectangle in canvas coordinates (logical px).
     pub fn rect(&self) -> Rect {
@@ -99,12 +82,7 @@ impl Rect {
         let y = self.y.min(other.y);
         let right = (self.x + self.width).max(other.x + other.width);
         let bottom = (self.y + self.height).max(other.y + other.height);
-        Rect {
-            x,
-            y,
-            width: right - x,
-            height: bottom - y,
-        }
+        Rect { x, y, width: right - x, height: bottom - y }
     }
 }
 
@@ -124,12 +102,7 @@ pub struct HitRegion {
 
 impl HitRegion {
     pub fn new(transition: Duration) -> Self {
-        Self {
-            current: Rect::default(),
-            previous: Rect::default(),
-            settle_at: None,
-            transition,
-        }
+        Self { current: Rect::default(), previous: Rect::default(), settle_at: None, transition }
     }
 
     pub fn set_target(&mut self, rect: Rect, now: Instant) {
@@ -155,13 +128,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn capsule_is_horizontally_centered() {
-        let r = Geometry::EXPANDED.rect();
-        assert_eq!(r.x + r.width / 2.0, CANVAS_WIDTH / 2.0);
-        assert!(
-            r.y + r.height <= CANVAS_HEIGHT,
-            "expanded card must fit in the canvas"
-        );
+    fn every_shape_is_centered_and_fits_the_canvas() {
+        for g in [
+            Geometry::IDLE,
+            Geometry::IDLE_SHELF,
+            Geometry::MEDIA_COMPACT,
+            Geometry::MEDIA_PEEK,
+            Geometry::OSD,
+            Geometry::OSD_TALL,
+            Geometry::TRANSFER,
+            Geometry::TRANSFER_PEEK,
+            Geometry::SHELF,
+            Geometry::EXPANDED,
+        ] {
+            let r = g.rect();
+            assert_eq!(r.x + r.width / 2.0, CANVAS_WIDTH / 2.0);
+            assert!(r.x >= 0.0 && r.y + r.height <= CANVAS_HEIGHT, "{g:?} must fit");
+            assert!(g.radius * 2.0 <= g.height + 0.01, "{g:?} radius too large");
+        }
     }
 
     #[test]
@@ -179,9 +163,7 @@ mod tests {
 
         let mid = t0 + Duration::from_millis(1200);
         let big = Geometry::EXPANDED.rect();
-        assert!(hr
-            .active(mid)
-            .contains(big.x + 1.0, big.y + big.height - 1.0));
+        assert!(hr.active(mid).contains(big.x + 1.0, big.y + big.height - 1.0));
 
         let settled = t0 + Duration::from_millis(1500);
         assert_eq!(hr.active(settled), Geometry::MEDIA_COMPACT.rect());

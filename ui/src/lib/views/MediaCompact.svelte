@@ -1,8 +1,13 @@
 <script lang="ts">
-  import type { MediaInfo } from "../types";
+  import type { MediaInfo, Transfer } from "../types";
+  import TransferLine from "./TransferLine.svelte";
   import Waveform from "./Waveform.svelte";
 
-  let { media, artwork }: { media: MediaInfo; artwork: string | null } = $props();
+  let {
+    media,
+    artwork,
+    transfer = null,
+  }: { media: MediaInfo; artwork: string | null; transfer?: Transfer | null } = $props();
 </script>
 
 <div class="compact">
@@ -11,12 +16,14 @@
   {:else}
     <div class="placeholder"></div>
   {/if}
-  <span class="title">{media.title}</span>
+  <span class="title" dir="auto">{media.title}</span>
   <Waveform playing={media.playing} />
+  {#if transfer}<TransferLine {transfer} />{/if}
 </div>
 
 <style>
   .compact {
+    position: relative;
     height: 100%;
     display: flex;
     align-items: center;

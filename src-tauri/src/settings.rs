@@ -29,6 +29,12 @@ pub struct Settings {
     pub theme: ThemePref,
     pub music_dir: Option<PathBuf>,
     pub player_volume: f32,
+    /// Global shortcut for the quick note ("" disables it).
+    pub note_shortcut: String,
+    /// Show a peek in the island when something is copied.
+    pub clipboard_peek: bool,
+    /// Show background downloads and file copies in the island.
+    pub show_transfers: bool,
 }
 
 impl Default for Settings {
@@ -37,16 +43,16 @@ impl Default for Settings {
             theme: ThemePref::System,
             music_dir: None,
             player_volume: 0.8,
+            note_shortcut: "ScrollLock".into(),
+            clipboard_peek: true,
+            show_transfers: true,
         }
     }
 }
 
 impl Settings {
     pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
     pub fn save(&self, path: &Path) {
