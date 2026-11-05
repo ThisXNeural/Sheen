@@ -15,5 +15,10 @@ export default defineConfig({
     target: "chrome120",
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    // Two entry points: the always-on island stays tiny; the library window's
+    // code is only loaded when that window is opened.
+    rollupOptions: {
+      input: { island: "ui/index.html", main: "ui/main.html", note: "ui/note.html" },
+    },
   },
 });

@@ -7,8 +7,9 @@
 //! where the cursor is: the window is click-through everywhere except over the
 //! capsule, which `sheen_core::HitRegion` describes.
 //!
-//! The cursor is polled at display rate only while it is near the island and
-//! at a lazy rate otherwise, so the idle cost is negligible.
+//! The cursor is polled at display rate only while it is near the island (or
+//! a file drag is in progress) and at a lazy rate otherwise, so the idle cost
+//! is negligible.
 
 use sheen_core::{HitRegion, SheenEvent};
 use sheen_win::Signal;
@@ -23,15 +24,44 @@ const SLOW: Duration = Duration::from_millis(120);
 const NEAR: f64 = 120.0;
 const FRAME_REFRESH: Duration = Duration::from_secs(2);
 
-pub fn spawn(window: WebviewWindow, region: Arc<Mutex<HitRegion>>, signals: Sender<Signal>) {
+/// Set while a panel (media card, shelf) is open: clicks anywhere else close it.
+pub type WatchClicks = Arc<std::sync::atomic::AtomicBool>;
+
+pub fn spawn(
+    window: WebviewWindow,
+    region: Arc<Mutex<HitRegion>>,
+    watch_clicks: WatchClicks,
+    signals: Sender<Signal>,
+) {
     std::thread::Builder::new()
         .name("sheen-hit-test".into())
         .spawn(move || {
             let mut inside = false;
+            let mut dragging = false;
+            let mut button_was_down = false;
             let mut frame = None;
             let mut refreshed = Instant::now();
             loop {
                 let mut delay = SLOW;
+                // A file drag anywhere turns the island into a drop target.
+                let drag = sheen_win::file_drag_active();
+                if drag != dragging {
+                    dragging = drag;
+                    if signals.send(Signal::Event(SheenEvent::FileDrag(drag))).is_err() {
+                        return;
+                    }
+                }
+                // Watch for a click elsewhere while a panel is open. Polled at
+                // display rate only during that time.
+                let watching = watch_clicks.load(std::sync::atomic::Ordering::Relaxed);
+                if dragging || watching {
+                    delay = FAST;
+                }
+                let button = watching && sheen_win::mouse_button_down();
+                if button && !button_was_down && !inside && !dragging {
+                    let _ = signals.send(Signal::Event(SheenEvent::OutsideClick));
+                }
+                button_was_down = button;
                 // The window does not move, but monitor/DPI changes can still
                 // shift it; re-read its frame now and then instead of per tick.
                 if frame.is_none() || refreshed.elapsed() > FRAME_REFRESH {
@@ -46,10 +76,7 @@ pub fn spawn(window: WebviewWindow, region: Arc<Mutex<HitRegion>>, signals: Send
                     if now_inside != inside {
                         inside = now_inside;
                         let _ = window.set_ignore_cursor_events(!inside);
-                        if signals
-                            .send(Signal::Event(SheenEvent::Hover(inside)))
-                            .is_err()
-                        {
+                        if signals.send(Signal::Event(SheenEvent::Hover(inside))).is_err() {
                             return;
                         }
                     }
@@ -78,11 +105,7 @@ impl Frame {
     fn read(window: &WebviewWindow) -> Option<Self> {
         let origin = window.outer_position().ok()?;
         let scale = window.scale_factor().ok()?;
-        Some(Self {
-            x: origin.x as f64,
-            y: origin.y as f64,
-            scale,
-        })
+        Some(Self { x: origin.x as f64, y: origin.y as f64, scale })
     }
 
     /// Physical screen coordinates → the canvas' logical coordinates.

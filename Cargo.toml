@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/sheen-core", "crates/sheen-win", "src-tauri"]
+members = ["crates/sheen-core", "crates/sheen-player", "crates/sheen-win", "src-tauri"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/thisxneural/sheen"
@@ -11,6 +11,7 @@ repository = "https://github.com/thisxneural/sheen"
 [workspace.dependencies]
 sheen-core = { path = "crates/sheen-core" }
 sheen-win = { path = "crates/sheen-win" }
+sheen-player = { path = "crates/sheen-player" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"

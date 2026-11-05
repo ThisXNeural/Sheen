@@ -5,8 +5,7 @@ import type { MediaCommand, Presentation } from "./types";
 
 // Event and command names are defined in src-tauri/src/main.rs.
 
-/** False when the UI is opened in a plain browser (`pnpm dev`). */
-export const inTauri = "__TAURI_INTERNALS__" in window;
+import { inTauri } from "../shared/env";
 
 export function onPresentation(cb: (p: Presentation) => void): Promise<UnlistenFn> {
   if (!inTauri) return Promise.resolve(startDemo(cb));
@@ -28,3 +27,11 @@ export const expand = () => call("expand");
 export const collapse = () => call("collapse");
 export const mediaCommand = (command: MediaCommand) => call("media_command", { command });
 export const adjustVolume = (delta: number) => call("adjust_volume", { delta });
+export const openMainWindow = () => call("open_main_window");
+export const shelfRequest = () => call("shelf_request");
+export const dismiss = () => call("dismiss_island");
+export const shelfRemove = (ids: number[]) => call("shelf_remove", { ids });
+export const shelfClear = () => call("shelf_clear");
+export const shelfOpen = (id: number) => call("shelf_open", { id });
+export const shelfReveal = (id: number) => call("shelf_reveal", { id });
+export const shelfDragOut = (ids: number[]) => call("shelf_drag_out", { ids });

@@ -1,0 +1,21 @@
+[package]
+name = "sheen-player"
+description = "Sheen's built-in music player: library scanning, queue and playback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+lofty = "0.25"
+walkdir = "2.5"
+fastrand = "2.3"
+# Cover thumbnails: only the decoders/encoders we need.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+# Audio output only on Windows (cpal needs ALSA headers elsewhere). Only the
+# decoders we need are compiled in: no recording, no noise/dither.
+[target.'cfg(windows)'.dependencies]
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3", "flac", "mp4", "vorbis", "wav"] }

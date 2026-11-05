@@ -1,4 +1,4 @@
-<div class="idle"><span></span></div>
+<div class="idle"><span class="dot"></span></div>
 
 <style>
   .idle {
@@ -7,7 +7,7 @@
     align-items: center;
     justify-content: center;
   }
-  span {
+  .dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
