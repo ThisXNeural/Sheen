@@ -58,6 +58,9 @@ test.describe("interactions", () => {
     await page.getByRole("menuitem", { name: "Add to playlist" }).hover();
     await expect(page.getByRole("menu")).toHaveCount(2);
     await expectCleanLayout(page, "context menu open");
+    // No dangling separator at the end of a menu.
+    const lastChild = page.getByRole("menu").first().locator(":scope > *").last();
+    await expect(lastChild).toHaveAttribute("role", "menuitem");
   });
 
   test("new playlist dialog", async ({ page }) => {

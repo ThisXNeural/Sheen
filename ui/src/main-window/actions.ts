@@ -98,7 +98,18 @@ export function trackMenu(tracks: api.Track[], opts: { playlistId?: number; list
       },
     });
   }
-  return items;
+  return tidy(items);
+}
+
+/** Drop separators at the edges and doubled ones (e.g. multi-select menus). */
+function tidy(items: MenuItem[]): MenuItem[] {
+  const out: MenuItem[] = [];
+  for (const item of items) {
+    if (item.separator && (!out.length || out[out.length - 1].separator)) continue;
+    out.push(item);
+  }
+  while (out.length && out[out.length - 1].separator) out.pop();
+  return out;
 }
 
 export function openTrackMenu(e: MouseEvent, tracks: api.Track[], opts: Parameters<typeof trackMenu>[1] = {}) {
