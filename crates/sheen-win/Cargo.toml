@@ -1,0 +1,31 @@
+[package]
+name = "sheen-win"
+description = "Windows platform services for Sheen: window behaviour, SMTC, Core Audio, full-screen detection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sheen-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+base64 = "0.22"
+windows-core = "0.62"
+windows-future = "0.3"
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Media_Control",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/sheen-core", "crates/sheen-win", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/thisxneural/sheen"
+
+[workspace.dependencies]
+sheen-core = { path = "crates/sheen-core" }
+sheen-win = { path = "crates/sheen-win" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
