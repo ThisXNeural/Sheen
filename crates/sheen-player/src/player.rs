@@ -396,7 +396,7 @@ mod tests {
     }
 
     fn core() -> Core {
-        Core::new(new_engine(), 0.8)
+        Core::new(crate::engine::silent_engine(), 0.8)
     }
 
     #[test]

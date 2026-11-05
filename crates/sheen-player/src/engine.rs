@@ -24,7 +24,7 @@ pub(crate) fn new_engine() -> Box<dyn Engine> {
     }
     #[cfg(not(windows))]
     {
-        Box::new(silent::SilentEngine::default())
+        silent_engine()
     }
 }
 
@@ -108,7 +108,14 @@ mod rodio_engine {
     }
 }
 
-#[cfg(not(windows))]
+/// A clock-only engine: real playback elsewhere, and deterministic tests on
+/// every OS (no audio device or real files needed).
+#[cfg(any(test, not(windows)))]
+pub(crate) fn silent_engine() -> Box<dyn Engine> {
+    Box::new(silent::SilentEngine::default())
+}
+
+#[cfg(any(test, not(windows)))]
 mod silent {
     use super::*;
     use std::time::Instant;
