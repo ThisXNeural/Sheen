@@ -3,6 +3,7 @@
   import { Spring } from "svelte/motion";
   import { fade } from "svelte/transition";
   import * as ipc from "./lib/ipc";
+  import { initTheme } from "./shared/theme";
   import type { Presentation } from "./lib/types";
   import Idle from "./lib/views/Idle.svelte";
   import MediaCompact from "./lib/views/MediaCompact.svelte";
@@ -38,6 +39,7 @@
   });
 
   onMount(() => {
+    initTheme();
     const subs = [ipc.onPresentation((next) => (p = next)), ipc.onArtwork((url) => (artwork = url))];
     ipc.currentPresentation().then((next) => next && (p = next));
     ipc.currentArtwork().then((url) => (artwork = url));
@@ -52,6 +54,8 @@
 
   function onClick() {
     if (p.mode === "mediaCompact") ipc.expand();
+    // The idle pill is the island's "home button": it opens the main window.
+    else if (p.mode === "idle") ipc.openMainWindow();
   }
 </script>
 
@@ -59,7 +63,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
     class="capsule"
-    class:interactive={p.mode === "mediaCompact"}
+    class:interactive={p.mode === "mediaCompact" || p.mode === "idle"}
     style:width="{width.current}px"
     style:height="{height.current}px"
     style:border-radius="{radius.current}px"
@@ -95,7 +99,11 @@
     position: relative;
     overflow: hidden;
     background: var(--island-bg);
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--island-shadow);
+    color: var(--island-fg);
+    transition:
+      background-color 0.3s,
+      color 0.3s;
     will-change: width, height, border-radius;
   }
 

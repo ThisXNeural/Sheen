@@ -1,8 +1,9 @@
 # Sheen
 
-A Dynamic Island for Windows. It's a small capsule at the top of the screen that
-changes shape for whatever is happening: media playback, volume and other
-system OSDs, and later a file shelf, clipboard peek and scratchpad.
+A Dynamic Island for Windows, with a small built-in music player. It's a
+capsule at the top of the screen that changes shape for whatever is happening:
+media playback, volume and other system OSDs, and later a file shelf,
+clipboard peek and scratchpad.
 
 > **Status:** early scaffold. The architecture and the first vertical slice
 > (media capsule, volume OSD, full-screen hiding, no-focus/click-through window)
@@ -27,9 +28,10 @@ reasoning and the trade-offs that were accepted.
 | Path | Role |
 |---|---|
 | `crates/sheen-core` | Pure Rust, no OS or UI deps. Event model, the `Island` state machine (priorities, OSD timeouts, expand/collapse), capsule geometry and hit region. Unit-tested on any OS. |
-| `crates/sheen-win` | Windows services, one thread each: SMTC media sessions, Core Audio volume, full-screen detection, Win32 window styles. Stubs on other OSes. |
+| `crates/sheen-win` | Windows services, one thread each: SMTC media sessions, Core Audio volume, full-screen detection, Win32 window styles, and publishing the built-in player to SMTC. Stubs on other OSes. |
+| `crates/sheen-player` | Built-in player: library scan with tag cache (lofty), queue/shuffle/repeat, playback thread (rodio). Queue and library logic are unit-tested on any OS. |
 | `src-tauri` | Thin shell that wires the services to the core and the core to the webview, and owns hit-testing. |
-| `ui` | Svelte 5 front-end. Renders a `Presentation` with spring physics and has no logic of its own. Opened in a plain browser, it runs a demo backend. |
+| `ui` | Svelte 5 front-end with two entry points: `index.html` (island) and `main.html` (library, player and settings). Opened in a plain browser, both run against a demo backend. |
 
 ### Window model
 
@@ -50,6 +52,33 @@ reasoning and the trade-offs that were accepted.
   D3D/presentation mode, or when the foreground window covers the primary
   monitor.
 
+### Built-in player
+
+* **Formats:** MP3, FLAC, AAC/M4A, Ogg Vorbis and WAV. Only these decoders are compiled in.
+* **Library:** scans the music folder (defaults to the Windows Music folder)
+  in the background. Tags are cached in `library.json`, and a file is only
+  re-read when its modification time changes, so rescans are close to
+  instant.
+* **Windows integration:** the player registers itself with SMTC, so media
+  keys, the Windows media flyout and the island all control it exactly like
+  Spotify. There is no separate code path.
+* **Resource use:**
+  * The audio device is opened only while playing and released after 30 s
+    paused.
+  * The main window is created when opened and destroyed when closed, so its
+    webview uses no memory while hidden.
+  * The track list is virtualised, so only the visible rows are in the DOM.
+  * The playhead is interpolated in the UI instead of being streamed over IPC.
+
+### Theme
+
+Light or dark follows the Windows app theme automatically and switches live
+when you change it in Windows. Settings → Appearance can force Light or Dark.
+Both the main window and the island (black in dark mode, frosted white in
+light mode) follow it.
+
+Open the main window from the tray icon, or click the idle island pill.
+
 ## Development
 
 Prerequisites (on Windows): Rust (stable, MSVC toolchain), Node 20+, pnpm,
@@ -59,8 +88,9 @@ the WebView2 runtime (preinstalled on Windows 11).
 pnpm install
 pnpm tauri dev        # run the app
 pnpm dev              # UI only, in any browser, with a demo backend
-                      #   add ?mode=idle|mediaCompact|osd|expanded to pin a state
-cargo test -p sheen-core
+                      #   /           island; ?mode=idle|mediaCompact|osd|expanded pins a state
+                      #   /main.html  library/player window
+cargo test -p sheen-core -p sheen-player
 pnpm check            # svelte-check / TypeScript
 pnpm tauri build      # NSIS + MSI installers
 ```
@@ -81,11 +111,19 @@ cargo clippy --workspace --target x86_64-pc-windows-msvc
 - [x] Volume OSD from Core Audio (any source), scroll-to-change-volume
 - [x] Spring-animated capsule, compact / expanded / OSD views
 
+**Phase 0.5: built-in player**
+- [x] Library scan with incremental tag cache, search, virtualised list
+- [x] Play/pause/next/prev/seek, shuffle, repeat (all/one), volume
+- [x] Published to SMTC: media keys, Windows flyout and island
+- [x] Main window (library, player bar, settings) created on demand; tray icon
+- [x] Light/dark follows Windows, with an in-app override
+- [ ] Gapless playback, playlists, album view
+
 **Phase 1: verify on hardware and polish**
 - [ ] Verify on Windows 10 and 11: focus behaviour with WebView2, click-through, multi-DPI
 - [ ] Measure the RAM baseline, tune WebView2 flags
 - [ ] Re-position on display/DPI changes; choose a monitor
-- [ ] Tray icon, autostart, settings file
+- [ ] Autostart
 - [ ] Real level meter for the mini waveform (`IAudioMeterInformation`)
 
 **Phase 2: System OSD**

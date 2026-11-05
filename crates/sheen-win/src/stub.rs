@@ -1,6 +1,6 @@
 //! Inert stand-ins used on non-Windows targets.
 
-use crate::Signal;
+use crate::{MediaButton, NowPlaying, Signal};
 use sheen_core::MediaCommand;
 use std::sync::mpsc::Sender;
 
@@ -25,4 +25,12 @@ pub fn spawn_fullscreen_watcher(_tx: Sender<Signal>) {}
 
 pub fn apply_island_window_style(_hwnd: isize) -> anyhow::Result<()> {
     Ok(())
+}
+
+pub struct NowPlayingHandle;
+impl NowPlayingHandle {
+    pub fn spawn(_hwnd: isize, _on_button: Box<dyn Fn(MediaButton) + Send + Sync>) -> Self {
+        Self
+    }
+    pub fn update(&self, _now_playing: NowPlaying) {}
 }

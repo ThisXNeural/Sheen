@@ -1,11 +1,13 @@
 mod audio;
 mod fullscreen;
 mod media;
+mod now_playing;
 mod window;
 
 pub use audio::AudioHandle;
 pub use fullscreen::spawn_fullscreen_watcher;
 pub use media::MediaHandle;
+pub use now_playing::NowPlayingHandle;
 pub use window::apply_island_window_style;
 
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};

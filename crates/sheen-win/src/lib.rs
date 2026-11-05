@@ -30,6 +30,51 @@ mod stub;
 #[cfg(not(windows))]
 use stub as imp;
 
+/// A transport button pressed in Windows' media controls (media keys, flyout,
+/// or the island acting on the built-in player's session).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaButton {
+    Play,
+    Pause,
+    Next,
+    Previous,
+    Seek(u64),
+}
+
+/// What the built-in player is doing, as published to Windows.
+#[derive(Debug, Clone, Default)]
+pub struct NowPlaying {
+    pub track: Option<NowPlayingTrack>,
+    pub playing: bool,
+    pub position_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NowPlayingTrack {
+    /// Changes whenever title/artist/cover change; metadata is only re-sent then.
+    pub key: u64,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration_ms: u64,
+    /// Encoded image bytes (JPEG/PNG) of the cover art.
+    pub cover: Option<Vec<u8>>,
+}
+
+/// Registers the built-in player with Windows' media controls.
+pub struct NowPlayingPublisher(imp::NowPlayingHandle);
+
+impl NowPlayingPublisher {
+    /// `hwnd` is any top-level window of this process (raw handle as integer).
+    pub fn start(hwnd: isize, on_button: impl Fn(MediaButton) + Send + Sync + 'static) -> Self {
+        Self(imp::NowPlayingHandle::spawn(hwnd, Box::new(on_button)))
+    }
+
+    pub fn update(&self, now_playing: NowPlaying) {
+        self.0.update(now_playing);
+    }
+}
+
 /// Handles to the running services.
 pub struct Services {
     media: imp::MediaHandle,
