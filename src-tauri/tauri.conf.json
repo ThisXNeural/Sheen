@@ -44,13 +44,25 @@
       "msi"
     ],
     "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
       "icons/icon.ico",
       "icons/icon.png"
     ],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
       }
-    }
+    },
+    "publisher": "Sheen",
+    "copyright": "MIT License",
+    "category": "Utility",
+    "shortDescription": "A Dynamic Island for Windows",
+    "longDescription": "A Dynamic Island for Windows with a built-in music player, download progress, a file shelf, clipboard peek and a quick note."
   }
 }
